@@ -1,4 +1,4 @@
-module github.com/vmware/transport-go
+module github.com/pb33f/ranch
 
 go 1.16
 
