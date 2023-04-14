@@ -10,7 +10,10 @@ var svcLifecycleManagerInstance ServiceLifecycleManager
 type RequestBuilder func(w http.ResponseWriter, r *http.Request) model.Request
 
 type ServiceLifecycleManager interface {
-    GetServiceHooks(serviceChannelName string) ServiceLifecycleHookEnabled
+    //GetServiceHooks(serviceChannelName string) ServiceLifecycleHookEnabled
+    GetOnReadyCapableService(serviceChannelName string) OnServiceReadyEnabled
+    GetOnServerShutdownService(serviceChannelName string) OnServerShutdownEnabled
+    GetRESTBridgeEnabledService(serviceChannelName string) RESTBridgeEnabled
     OverrideRESTBridgeConfig(serviceChannelName string, config []*RESTBridgeConfig) error
 }
 
@@ -18,6 +21,18 @@ type ServiceLifecycleHookEnabled interface {
     OnServiceReady() chan bool                // service initialization logic should be implemented here
     OnServerShutdown()                        // teardown logic goes here and will be automatically invoked on graceful server shutdown
     GetRESTBridgeConfig() []*RESTBridgeConfig // service-to-REST endpoint mappings go here
+}
+
+type RESTBridgeEnabled interface {
+    GetRESTBridgeConfig() []*RESTBridgeConfig // service-to-REST endpoint mappings go here
+}
+
+type OnServiceReadyEnabled interface {
+    OnServiceReady() chan bool // service initialization logic should be implemented here
+}
+
+type OnServerShutdownEnabled interface {
+    OnServerShutdown() // teardown logic goes here and will be automatically invoked on graceful server shutdown
 }
 
 type SetupRESTBridgeRequest struct {
@@ -39,15 +54,40 @@ type serviceLifecycleManager struct {
     serviceRegistryRef ServiceRegistry // service registry reference
 }
 
-// GetServiceHooks looks up the ServiceRegistry by service channel and returns the found service
-// lifecycle hooks implementation. returns nil if no such service channel exists.
-func (lm *serviceLifecycleManager) GetServiceHooks(serviceChannelName string) ServiceLifecycleHookEnabled {
+// GetOnReadyCapableService returns a service that implements OnServiceReadyEnabled
+func (lm *serviceLifecycleManager) GetOnReadyCapableService(serviceChannelName string) OnServiceReadyEnabled {
     service, err := lm.serviceRegistryRef.GetService(serviceChannelName)
     if err != nil {
         return nil
     }
 
-    if lifecycleHookEnabled, ok := service.(ServiceLifecycleHookEnabled); ok {
+    if lifecycleHookEnabled, ok := service.(OnServiceReadyEnabled); ok {
+        return lifecycleHookEnabled
+    }
+    return nil
+}
+
+// GetOnServerShutdownService returns a service that implements OnServerShutdownEnabled
+func (lm *serviceLifecycleManager) GetOnServerShutdownService(serviceChannelName string) OnServerShutdownEnabled {
+    service, err := lm.serviceRegistryRef.GetService(serviceChannelName)
+    if err != nil {
+        return nil
+    }
+
+    if lifecycleHookEnabled, ok := service.(OnServerShutdownEnabled); ok {
+        return lifecycleHookEnabled
+    }
+    return nil
+}
+
+// GetRESTBridgeEnabledService returns a service that implements OnServerShutdownEnabled
+func (lm *serviceLifecycleManager) GetRESTBridgeEnabledService(serviceChannelName string) RESTBridgeEnabled {
+    service, err := lm.serviceRegistryRef.GetService(serviceChannelName)
+    if err != nil {
+        return nil
+    }
+
+    if lifecycleHookEnabled, ok := service.(RESTBridgeEnabled); ok {
         return lifecycleHookEnabled
     }
     return nil

@@ -255,7 +255,6 @@ func CreateConfigJsonForTest() (string, error) {
       "Heartbeat": 60000
     }
   },
-  "enable_prometheus": true,
   "tls_config": {
     "cert_file": "cert/fullchain.pem",
     "key_file": "cert/server.key"

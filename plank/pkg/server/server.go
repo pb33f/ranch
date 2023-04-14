@@ -22,7 +22,6 @@ import (
     "time"
 
     "github.com/pb33f/ranch/model"
-    "github.com/spf13/cobra"
     "github.com/spf13/pflag"
 
     "github.com/gorilla/handlers"
@@ -122,15 +121,6 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 func CreateServerConfig() (*PlatformServerConfig, error) {
     factory := &serverConfigFactory{}
     factory.configureFlags(pflag.CommandLine)
-    factory.parseFlags(os.Args)
-    return generatePlatformServerConfig(factory)
-}
-
-// CreateServerConfigForCobraCommand performs the same as CreateServerConfig but loads the flags to
-// the provided cobra Command's *pflag.FlagSet instead of the global FlagSet instance.
-func CreateServerConfigForCobraCommand(cmd *cobra.Command) (*PlatformServerConfig, error) {
-    factory := &serverConfigFactory{}
-    factory.configureFlags(cmd.Flags())
     factory.parseFlags(os.Args)
     return generatePlatformServerConfig(factory)
 }
@@ -243,11 +233,11 @@ func (ps *platformServer) StopServer() {
     lcm := service.GetServiceLifecycleManager()
     wg := sync.WaitGroup{}
     for _, svcChannel := range svcRegistry.GetAllServiceChannels() {
-        hooks := lcm.GetServiceHooks(svcChannel)
+        hooks := lcm.GetOnServerShutdownService(svcChannel)
         if hooks != nil {
             utils.Log.Infof("Teardown in progress for service at '%s'", svcChannel)
             wg.Add(1)
-            go func(cName string, h service.ServiceLifecycleHookEnabled) {
+            go func(cName string, h service.OnServerShutdownEnabled) {
                 h.OnServerShutdown()
                 utils.Log.Infof("Teardown completed for service at '%s'", cName)
                 wg.Done()
@@ -302,8 +292,8 @@ func (ps *platformServer) RegisterService(svc service.FabricService, svcChannel 
     if err == nil {
         utils.Log.Infof("[plank] Service '%s' registered at channel '%s'", svcType.String(), svcChannel)
         svcLifecycleManager := service.GetServiceLifecycleManager()
-        var hooks service.ServiceLifecycleHookEnabled
-        if hooks = svcLifecycleManager.GetServiceHooks(svcChannel); hooks == nil {
+        var hooks service.OnServiceReadyEnabled
+        if hooks = svcLifecycleManager.GetOnReadyCapableService(svcChannel); hooks == nil {
             // if service has no lifecycle hooks mark the channel as ready straight up
             storeManager := ps.eventbus.GetStoreManager()
             store := storeManager.GetStore(service.ServiceReadyStore)

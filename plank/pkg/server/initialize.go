@@ -9,8 +9,6 @@ import (
     "github.com/pb33f/ranch/plank/utils"
     "github.com/pb33f/ranch/service"
     "github.com/pb33f/ranch/stompserver"
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promhttp"
     "github.com/sirupsen/logrus"
     "log"
     "net/http"
@@ -74,17 +72,6 @@ func (ps *platformServer) initialize() {
     ps.router.Path("/health").Name("/health").Handler(
         middleware.CacheControlMiddleware([]string{"/health"}, middleware.NewCacheControlDirective().NoStore())(ps.endpointHandlerMap["/health"]))
 
-    // register a reserved path /prometheus for runtime metrics, if enabled
-    if ps.serverConfig.EnablePrometheus {
-        ps.endpointHandlerMap["/prometheus"] = middleware.BasicSecurityHeaderMiddleware()(promhttp.HandlerFor(
-            prometheus.DefaultGatherer,
-            promhttp.HandlerOpts{
-                EnableOpenMetrics: true,
-            })).(http.HandlerFunc)
-        ps.router.Path("/prometheus").Name("/prometheus").Methods(http.MethodGet).Handler(
-            ps.endpointHandlerMap["/prometheus"])
-    }
-
     // register static paths
     for _, dir := range ps.serverConfig.StaticDir {
         p, uri := utils.DeriveStaticURIFromPath(dir)
@@ -114,7 +101,7 @@ func (ps *platformServer) initialize() {
 
         fabricSvc, _ := serviceRegistryInstance.GetService(request.ServiceChannel)
         svcReadyStore := ps.eventbus.GetStoreManager().GetStore(service.ServiceReadyStore)
-        hooks := svcLifecycleManager.GetServiceHooks(request.ServiceChannel)
+        hooks := svcLifecycleManager.GetOnReadyCapableService(request.ServiceChannel)
 
         if request.Override {
             // clear old bridges affected by this override. there's a suboptimal workaround for mux.Router not
@@ -151,10 +138,6 @@ func (ps *platformServer) initialize() {
     // configure Fabric
     ps.configureFabric()
 
-    // print out the quick summary of the server configuration, if NoBanner is false
-    if !ps.serverConfig.NoBanner {
-        ps.printBanner()
-    }
 }
 
 func (ps *platformServer) configureFabric() {

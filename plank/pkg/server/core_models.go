@@ -29,7 +29,6 @@ type PlatformServerConfig struct {
     LogConfig         *utils.LogConfig    `json:"log_config"`                     // log configuration (plank, Http access and error logs)
     FabricConfig      *FabricBrokerConfig `json:"fabric_config"`                  // Fabric (websocket) configuration
     TLSCertConfig     *TLSCertConfig      `json:"tls_config"`                     // TLS certificate configuration
-    EnablePrometheus  bool                `json:"enable_prometheus"`              // whether to enable Prometheus for runtime metrics
     Debug             bool                `json:"debug"`                          // enable debug logging
     NoBanner          bool                `json:"no_banner"`                      // start server without displaying the banner
     ShutdownTimeout   time.Duration       `json:"shutdown_timeout_in_minutes"`    // graceful server shutdown timeout in minutes

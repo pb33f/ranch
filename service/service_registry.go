@@ -139,7 +139,7 @@ func (r *serviceRegistry) RegisterService(service FabricService, serviceChannelN
     }
 
     // see if the service implements ServiceLifecycleHookEnabled interface and set up REST bridges as configured
-    var hooks ServiceLifecycleHookEnabled
+    var hooks RESTBridgeEnabled
     lcm := GetServiceLifecycleManager()
 
     // NOTE: this condition is only to be used when unit testing where each test case
@@ -152,7 +152,7 @@ func (r *serviceRegistry) RegisterService(service FabricService, serviceChannelN
     }
 
     // hand off registering REST bridges to Plank via bus messages
-    if hooks = lcm.GetServiceHooks(serviceChannelName); hooks != nil {
+    if hooks = lcm.GetRESTBridgeEnabledService(serviceChannelName); hooks != nil {
         if err = bus.GetBus().SendResponseMessage(
             LifecycleManagerChannelName,
             &SetupRESTBridgeRequest{ServiceChannel: serviceChannelName, Config: hooks.GetRESTBridgeConfig()},

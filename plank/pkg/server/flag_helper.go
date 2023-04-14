@@ -96,10 +96,6 @@ func (f *serverConfigFactory) NoBanner() bool {
     return viper.GetBool(utils.PlatformServerFlagConstants["NoBanner"]["FlagName"])
 }
 
-func (f *serverConfigFactory) Prometheus() bool {
-    return viper.GetBool(utils.PlatformServerFlagConstants["Prometheus"]["FlagName"])
-}
-
 func (f *serverConfigFactory) RestBridgeTimeout() int64 {
     return viper.GetInt64(utils.PlatformServerFlagConstants["RestBridgeTimeout"]["FlagName"])
 }

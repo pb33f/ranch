@@ -35,7 +35,6 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
     queuePrefix := f.QueuePrefix()
     requestPrefix := f.RequestPrefix()
     requestQueuePrefix := f.RequestQueuePrefix()
-    prometheus := f.Prometheus()
     restBridgeTimeout := f.RestBridgeTimeout()
 
     // if config file flag is provided, read directly from the file
@@ -99,7 +98,6 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
         },
         Debug:             debug,
         NoBanner:          noBanner,
-        EnablePrometheus:  prometheus,
         RestBridgeTimeout: time.Duration(restBridgeTimeout) * time.Minute,
     }
 

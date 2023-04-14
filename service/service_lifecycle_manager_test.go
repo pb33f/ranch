@@ -27,7 +27,7 @@ func TestServiceLifecycleManager_GetServiceHooks(t *testing.T) {
     sr.RegisterService(svc, "another-test-channel")
 
     // act
-    hooks := lcm.GetServiceHooks("another-test-channel")
+    hooks := lcm.GetOnReadyCapableService("another-test-channel")
 
     // assert
     assert.NotNil(t, hooks)
@@ -39,7 +39,7 @@ func TestServiceLifecycleManager_GetServiceHooks_NoSuchService(t *testing.T) {
     lcm := newTestServiceLifecycleManager(sr)
 
     // act
-    hooks := lcm.GetServiceHooks("i-don-t-exist")
+    hooks := lcm.GetOnReadyCapableService("i-don-t-exist")
 
     // assert
     assert.Nil(t, hooks)
@@ -53,7 +53,7 @@ func TestServiceLifecycleManager_GetServiceHooks_LifecycleHooksNotImplemented(t 
     sr.RegisterService(svc, "test-channel")
 
     // act
-    hooks := lcm.GetServiceHooks("test-channel")
+    hooks := lcm.GetOnReadyCapableService("test-channel")
 
     // assert
     assert.Nil(t, hooks)
