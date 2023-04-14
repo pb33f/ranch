@@ -146,14 +146,14 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
     go func() {
         ps.ServerAvailability.Http = true
         if ps.serverConfig.TLSCertConfig != nil {
-            utils.Log.Infof("[plank] Starting HTTP server at %s:%d with TLS", ps.serverConfig.Host, ps.serverConfig.Port)
+            utils.Log.Infof("[ranch] Starting HTTP server at %s:%d with TLS", ps.serverConfig.Host, ps.serverConfig.Port)
             if err := ps.HttpServer.ListenAndServeTLS(ps.serverConfig.TLSCertConfig.CertFile, ps.serverConfig.TLSCertConfig.KeyFile); err != nil {
                 if !errors.Is(err, http.ErrServerClosed) {
                     utils.Log.Fatalln(wrapError(errServerInit, err))
                 }
             }
         } else {
-            utils.Log.Infof("[plank] Starting HTTP server at %s:%d", ps.serverConfig.Host, ps.serverConfig.Port)
+            utils.Log.Infof("[ranch] Starting HTTP server at %s:%d", ps.serverConfig.Host, ps.serverConfig.Port)
             if err := ps.HttpServer.ListenAndServe(); err != nil {
                 if !errors.Is(err, http.ErrServerClosed) {
                     utils.Log.Fatalln(wrapError(errServerInit, err))
@@ -173,7 +173,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
                 fabricEndpoint = ""
             }
             brokerLocation := fmt.Sprintf("%s:%d%s", ps.serverConfig.Host, fabricPort, fabricEndpoint)
-            utils.Log.Infof("[plank] Starting Transport broker at %s", brokerLocation)
+            utils.Log.Infof("[ranch] Starting broker at %s", brokerLocation)
             ps.ServerAvailability.Fabric = true
 
             if err := ps.eventbus.StartFabricEndpoint(ps.fabricConn, *ps.serverConfig.FabricConfig.EndpointConfig); err != nil {
@@ -210,7 +210,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 
 // StopServer attempts to gracefully stop the HTTP and STOMP server if running
 func (ps *platformServer) StopServer() {
-    utils.Log.Infoln("[plank] Server shutting down")
+    utils.Log.Infoln("[ranch] Server shutting down")
     ps.ServerAvailability.Http = false
 
     baseCtx := context.Background()
@@ -290,7 +290,7 @@ func (ps *platformServer) RegisterService(svc service.FabricService, svcChannel 
     svcType := reflect.TypeOf(svc)
 
     if err == nil {
-        utils.Log.Infof("[plank] Service '%s' registered at channel '%s'", svcType.String(), svcChannel)
+        utils.Log.Infof("[ranch] Service '%s' registered at channel '%s'", svcType.String(), svcChannel)
         svcLifecycleManager := service.GetServiceLifecycleManager()
         var hooks service.OnServiceReadyEnabled
         if hooks = svcLifecycleManager.GetOnReadyCapableService(svcChannel); hooks == nil {
@@ -298,7 +298,7 @@ func (ps *platformServer) RegisterService(svc service.FabricService, svcChannel 
             storeManager := ps.eventbus.GetStoreManager()
             store := storeManager.GetStore(service.ServiceReadyStore)
             store.Put(svcChannel, true, service.ServiceInitStateChange)
-            utils.Log.Infof("[plank] Service '%s' initialized successfully", svcType.String())
+            utils.Log.Infof("[ranch] Service '%s' initialized successfully", svcType.String())
         }
     }
     return err
@@ -313,7 +313,7 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
     endpointHandlerKey := bridgeConfig.Uri + "-" + bridgeConfig.Method
 
     if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-        utils.Log.Warnf("[plank] Endpoint '%s (%s)' is already associated with a handler. "+
+        utils.Log.Warnf("[ranch] Endpoint '%s (%s)' is already associated with a handler. "+
             "Try another endpoint or remove it before assigning a new handler", bridgeConfig.Uri, bridgeConfig.Method)
         return
     }
@@ -370,7 +370,7 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
     }
 
     utils.Log.Infof(
-        "[plank] Service channel '%s' is now bridged to a REST endpoint %s (%s)",
+        "[ranch] Service channel '%s' is now bridged to a REST endpoint %s (%s)",
         bridgeConfig.ServiceChannel, bridgeConfig.Uri, bridgeConfig.Method)
 }
 
@@ -383,7 +383,7 @@ func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.R
     endpointHandlerKey := bridgeConfig.Uri + "-" + AllMethodsWildcard
 
     if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-        utils.Log.Warnf("[plank] Path prefix '%s (%s)' is already being handled. "+
+        utils.Log.Warnf("[ranch] Path prefix '%s (%s)' is already being handled. "+
             "Try another prefix or remove it before assigning a new handler", bridgeConfig.Uri, bridgeConfig.Method)
         return
     }
@@ -429,7 +429,7 @@ func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.R
     }
 
     utils.Log.Infof(
-        "[plank] Service channel '%s' is now bridged to a REST path prefix '%s'",
+        "[ranch] Service channel '%s' is now bridged to a REST path prefix '%s'",
         bridgeConfig.ServiceChannel, bridgeConfig.Uri)
 
 }
@@ -484,7 +484,7 @@ func (ps *platformServer) clearHttpChannelBridgesForService(serviceChannel strin
         methods, _ := r.GetMethods()
         // do not want to copy over the routes that will be overridden
         if lookupMap[name] {
-            utils.Log.Debugf("[plank] route '%s' will be overridden so not copying over to the new router instance", name)
+            utils.Log.Debugf("[ranch] route '%s' will be overridden so not copying over to the new router instance", name)
         } else {
             newRouter.Name(name).Path(path).Methods(methods...).Handler(handler)
         }
@@ -495,7 +495,7 @@ func (ps *platformServer) clearHttpChannelBridgesForService(serviceChannel strin
     existingMappings := ps.serviceChanToBridgeEndpoints[serviceChannel]
     ps.serviceChanToBridgeEndpoints[serviceChannel] = make([]string, 0)
     for _, handlerKey := range existingMappings {
-        utils.Log.Infof("[plank] Removing existing service - REST mapping '%s' for service '%s'", handlerKey, serviceChannel)
+        utils.Log.Infof("[ranch] Removing existing service - REST mapping '%s' for service '%s'", handlerKey, serviceChannel)
         delete(ps.endpointHandlerMap, handlerKey)
     }
     return newRouter

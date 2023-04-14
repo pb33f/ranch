@@ -118,7 +118,7 @@ func (ps *platformServer) initialize() {
         if val, found := svcReadyStore.Get(request.ServiceChannel); !found || !val.(bool) {
             readyChan := hooks.OnServiceReady()
             svcReadyStore.Put(request.ServiceChannel, <-readyChan, service.ServiceInitStateChange)
-            utils.Log.Infof("[plank] Service '%s' initialized successfully", reflect.TypeOf(fabricSvc).String())
+            utils.Log.Infof("[ranch] Service '%s' initialized successfully", reflect.TypeOf(fabricSvc).String())
             close(readyChan)
         }
 
