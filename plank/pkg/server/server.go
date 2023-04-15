@@ -514,10 +514,10 @@ func (ps *platformServer) loadGlobalHttpHandler(h *mux.Router) {
     defer ps.lock.Unlock()
     ps.router = h
     ps.HttpServer.Handler = handlers.RecoveryHandler()(
-        handlers.CompressHandler(
-            handlers.ProxyHeaders(
-                handlers.CombinedLoggingHandler(
-                    ps.serverConfig.LogConfig.GetAccessLogFilePointer(), ps.router))))
+        //handlers.CompressHandler(
+        handlers.ProxyHeaders(
+            handlers.CombinedLoggingHandler(
+                ps.serverConfig.LogConfig.GetAccessLogFilePointer(), ps.router)))
 }
 
 func (ps *platformServer) checkPortAvailability() {
