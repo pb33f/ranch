@@ -1,4 +1,4 @@
-name: Transport Post-merge pipeline
+name: Ranch Build & Test
 
 on:
   push:
