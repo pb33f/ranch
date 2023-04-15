@@ -80,6 +80,7 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
     upgrader.CheckOrigin = l.checkOrigin
 
     handler.HandleFunc(endpoint, func(writer http.ResponseWriter, request *http.Request) {
+        upgrader.Subprotocols = websocket.Subprotocols(request)
         conn, err := upgrader.Upgrade(writer, request, nil)
         if err != nil {
             l.connectionsChannel <- rawConnResult{err: err}
@@ -116,6 +117,7 @@ func NewWebSocketConnectionListener(addr string, endpoint string, allowedOrigins
     upgrader.CheckOrigin = l.checkOrigin
 
     rh.HandleFunc(endpoint, func(writer http.ResponseWriter, request *http.Request) {
+        upgrader.Subprotocols = websocket.Subprotocols(request)
         conn, err := upgrader.Upgrade(writer, request, nil)
         if err != nil {
             l.connectionsChannel <- rawConnResult{err: err}
