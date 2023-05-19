@@ -219,7 +219,7 @@ func (store *busStore) sendGalacticRequest(requestCmd string, requestPayload int
     // create request
     id := uuid.New()
     r := &model.Request{}
-    r.Request = requestCmd
+    r.RequestCommand = requestCmd
     r.Payload = requestPayload
     r.Id = &id
     jsonReq, _ := json.Marshal(r)

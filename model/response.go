@@ -7,20 +7,19 @@ import (
 	"github.com/google/uuid"
 )
 
-// ResponseDir represents a payload sent by a Fabric application.
+// Response represents a payload sent by a Fabric application.
 type Response struct {
-	Id           *uuid.UUID  `json:"id"`
-	Created      string      `json:"created"`
-	Version      int         `json:"version"`
-	Destination  string      `json:"channel"`
-	Payload      interface{} `json:"payload"`
-	Error        bool        `json:"error"`
-	ErrorCode    int         `json:"errorCode"`
-	ErrorMessage string      `json:"errorMessage"`
-	// If populated the response will be send to a single client
+	Id           *uuid.UUID  `json:"id,omitempty"`
+	Destination  string      `json:"channel,omitempty"`
+	Payload      interface{} `json:"payload,omitempty"`
+	Error        bool        `json:"error,omitempty"`
+	ErrorCode    int         `json:"errorCode,omitempty"`
+	ErrorMessage string      `json:"errorMessage,omitempty"`
+	// If populated the response will be sent to a single client
 	// on the specified destination topic.
 	BrokerDestination *BrokerDestinationConfig `json:"-"`
-	Headers           map[string]string        `json:"headers"` // passthrough any http stuff.
+	Headers           map[string]interface{}   `json:"-"` // passthrough any http headers
+	Marshal           bool                     `json:"-"` // if true, the payload be marshalled into JSON.
 }
 
 // Used to specify the target user queue of the Response

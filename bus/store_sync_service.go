@@ -92,7 +92,7 @@ func (syncService *storeSyncService) openNewClientSyncChannel(channelName string
                     return
                 }
 
-                switch request.Request {
+                switch request.RequestCommand {
                 case openStoreRequest:
                     syncService.openStore(syncClient, storeRequest, request.Id)
                 case closeStoreRequest:

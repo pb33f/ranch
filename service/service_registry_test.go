@@ -103,9 +103,9 @@ func TestServiceRegistry_RegisterService(t *testing.T) {
 
     id := uuid.New()
     req := model.Request{
-        Id:      &id,
-        Request: "test-request",
-        Payload: "request-payload",
+        Id:             &id,
+        RequestCommand: "test-request",
+        Payload:        "request-payload",
     }
 
     mockService.wg.Add(1)
@@ -132,8 +132,8 @@ func TestServiceRegistry_RegisterService(t *testing.T) {
     mockService.wg.Add(1)
     uuid := uuid.New()
     registry.bus.SendRequestMessage("test-channel", model.Request{
-        Request: "test-request-2",
-        Payload: "request-payload",
+        RequestCommand: "test-request-2",
+        Payload:        "request-payload",
     }, &uuid)
     mockService.wg.Wait()
 
@@ -171,9 +171,9 @@ func TestServiceRegistry_UnregisterService(t *testing.T) {
 
     id := uuid.New()
     req := model.Request{
-        Id:      &id,
-        Request: "test-request",
-        Payload: "request-payload",
+        Id:             &id,
+        RequestCommand: "test-request",
+        Payload:        "request-payload",
     }
 
     assert.Nil(t, registry.UnregisterService("test-channel"))

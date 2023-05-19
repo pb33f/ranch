@@ -45,7 +45,7 @@ func (ps *PingPongService) Init(core service.FabricServiceCore) error {
 // HandleServiceRequest routes the incoming request and based on the Request property of request, it invokes the
 // appropriate handler logic defined and separated by a switch statement like the one shown below.
 func (ps *PingPongService) HandleServiceRequest(request *model.Request, core service.FabricServiceCore) {
-    switch request.Request {
+    switch request.RequestCommand {
     // ping-post request type accepts the payload as a POJO
     case "ping-post":
         m := make(map[string]interface{})
@@ -114,7 +114,7 @@ func (ps *PingPongService) GetRESTBridgeConfig() []*service.RESTBridgeConfig {
             AllowHead:      true,
             AllowOptions:   true,
             FabricRequestBuilder: func(w http.ResponseWriter, r *http.Request) model.Request {
-                return model.Request{Id: &uuid.UUID{}, Request: "ping-get", Payload: r.URL.Query().Get("message")}
+                return model.Request{Id: &uuid.UUID{}, RequestCommand: "ping-get", Payload: r.URL.Query().Get("message")}
             },
         },
         {
@@ -124,8 +124,8 @@ func (ps *PingPongService) GetRESTBridgeConfig() []*service.RESTBridgeConfig {
             FabricRequestBuilder: func(w http.ResponseWriter, r *http.Request) model.Request {
                 pathParams := mux.Vars(r)
                 return model.Request{
-                    Id:      &uuid.UUID{},
-                    Request: "ping-get",
+                    Id:             &uuid.UUID{},
+                    RequestCommand: "ping-get",
                     Payload: fmt.Sprintf(
                         "From %s to %s: %s",
                         pathParams["from"],
