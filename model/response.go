@@ -15,6 +15,7 @@ type Response struct {
 	Error        bool        `json:"error,omitempty"`
 	ErrorCode    int         `json:"errorCode,omitempty"`
 	ErrorMessage string      `json:"errorMessage,omitempty"`
+	ErrorObject  interface{} `json:"errorObject,omitempty"`
 	// If populated the response will be sent to a single client
 	// on the specified destination topic.
 	BrokerDestination *BrokerDestinationConfig `json:"-"`

@@ -65,17 +65,19 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 					}
 
 					// deal with the response body now, if set.
-					n, e := json.Marshal(respBody)
-					if e != nil {
-
+					if respBody != "" {
 						w.WriteHeader(response.ErrorCode)
-						w.Write([]byte(response.ErrorMessage))
-						return
-
+						w.Write([]byte(fmt.Sprint(respBody)))
 					} else {
-						w.WriteHeader(response.ErrorCode)
-						w.Write(n)
-						return
+						if response.ErrorObject != nil {
+							n, e := json.Marshal(respBody)
+							if e != nil {
+								http.Error(w, e.Error(), 500)
+							} else {
+								w.WriteHeader(response.ErrorCode)
+								w.Write(n)
+							}
+						}
 					}
 				} else {
 					// if the response has headers, set those headers. particularly if you're sending around
