@@ -137,7 +137,7 @@ func CreateTestServer(config *PlatformServerConfig) (baseUrl, logFile string, s 
 
 // RunWhenServerReady runs test function fn after Plank has booted up
 func RunWhenServerReady(t *testing.T, eventBus bus.EventBus, fn func(*testing.T)) {
-    handler, _ := eventBus.ListenOnce(PLANK_SERVER_ONLINE_CHANNEL)
+    handler, _ := eventBus.ListenOnce(RANCH_SERVER_ONLINE_CHANNEL)
     handler.Handle(func(message *model.Message) {
         fn(t)
     }, func(err error) {
