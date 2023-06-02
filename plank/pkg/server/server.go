@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spf13/pflag"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -21,12 +22,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pb33f/ranch/model"
-	"github.com/spf13/pflag"
-
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/pb33f/ranch/bus"
+	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
@@ -121,7 +120,7 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 func CreateServerConfig() (*PlatformServerConfig, error) {
 	factory := &serverConfigFactory{}
 	factory.configureFlags(pflag.CommandLine)
-	factory.parseFlags(os.Args)
+	//factory.parseFlags(os.Args)
 	return generatePlatformServerConfig(factory)
 }
 
@@ -146,14 +145,14 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 	go func() {
 		ps.ServerAvailability.Http = true
 		if ps.serverConfig.TLSCertConfig != nil {
-			utils.Log.Infof("[ranch] Starting HTTP server at %s:%d with TLS", ps.serverConfig.Host, ps.serverConfig.Port)
+			utils.Log.Infof("[ranch] Yee-Haw! Starting up the ranch's HTTPS server at %s:%d with TLS", ps.serverConfig.Host, ps.serverConfig.Port)
 			if err := ps.HttpServer.ListenAndServeTLS(ps.serverConfig.TLSCertConfig.CertFile, ps.serverConfig.TLSCertConfig.KeyFile); err != nil {
 				if !errors.Is(err, http.ErrServerClosed) {
 					utils.Log.Fatalln(wrapError(errServerInit, err))
 				}
 			}
 		} else {
-			utils.Log.Infof("[ranch] Starting HTTP server at %s:%d", ps.serverConfig.Host, ps.serverConfig.Port)
+			utils.Log.Infof("[ranch] Yee-Haw! Starting up the ranch's HTTP server at %s:%d", ps.serverConfig.Host, ps.serverConfig.Port)
 			if err := ps.HttpServer.ListenAndServe(); err != nil {
 				if !errors.Is(err, http.ErrServerClosed) {
 					utils.Log.Fatalln(wrapError(errServerInit, err))
@@ -173,7 +172,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 				fabricEndpoint = ""
 			}
 			brokerLocation := fmt.Sprintf("%s:%d%s", ps.serverConfig.Host, fabricPort, fabricEndpoint)
-			utils.Log.Infof("[ranch] Starting broker at %s", brokerLocation)
+			utils.Log.Infof("[ranch] Hot-Dang! Starting up the ranch's STOMP message broker at %s", brokerLocation)
 			ps.ServerAvailability.Fabric = true
 
 			if err := ps.eventbus.StartFabricEndpoint(ps.fabricConn, *ps.serverConfig.FabricConfig.EndpointConfig); err != nil {
@@ -210,7 +209,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 
 // StopServer attempts to gracefully stop the HTTP and STOMP server if running
 func (ps *platformServer) StopServer() {
-	utils.Log.Infoln("[ranch] Server shutting down")
+	utils.Log.Infoln("[ranch] Server shutting down... see you around soon, partner!")
 	ps.ServerAvailability.Http = false
 
 	baseCtx := context.Background()
