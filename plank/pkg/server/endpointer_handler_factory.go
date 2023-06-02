@@ -8,6 +8,7 @@ import (
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"net/http"
+	"reflect"
 	"time"
 )
 
@@ -67,7 +68,17 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 					// deal with the response body now, if set.
 					if respBody != "" {
 						w.WriteHeader(response.ErrorCode)
-						w.Write([]byte(fmt.Sprint(respBody)))
+						switch reflect.TypeOf(respBody).Kind() {
+						case reflect.String:
+							_, _ = w.Write([]byte(fmt.Sprint(respBody)))
+						case reflect.Pointer:
+							n, e := json.Marshal(respBody)
+							if e != nil {
+								http.Error(w, e.Error(), 500)
+							} else {
+								_, _ = w.Write(n)
+							}
+						}
 					} else {
 						if response.ErrorObject != nil {
 							n, e := json.Marshal(respBody)
