@@ -116,10 +116,12 @@ func (ps *platformServer) initialize() {
 
 		// REST bridge setup done. now wait for service to be ready
 		if val, found := svcReadyStore.Get(request.ServiceChannel); !found || !val.(bool) {
-			readyChan := hooks.OnServiceReady()
-			svcReadyStore.Put(request.ServiceChannel, <-readyChan, service.ServiceInitStateChange)
+			if hooks != nil {
+				readyChan := hooks.OnServiceReady()
+				svcReadyStore.Put(request.ServiceChannel, <-readyChan, service.ServiceInitStateChange)
+				close(readyChan)
+			}
 			utils.Log.Infof("[ranch] Service '%s' initialized successfully", reflect.TypeOf(fabricSvc).String())
-			close(readyChan)
 		}
 
 	}, func(err error) {
