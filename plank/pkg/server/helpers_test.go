@@ -1,142 +1,142 @@
 package server
 
 import (
-    "encoding/json"
-    "github.com/spf13/pflag"
-    "github.com/stretchr/testify/assert"
-    "os"
-    "path/filepath"
-    "testing"
-    "time"
+	"encoding/json"
+	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
 func TestGeneratePlatformServerConfig_Default(t *testing.T) {
-    // arrange
-    f := &serverConfigFactory{}
-    pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
+	// arrange
+	f := &serverConfigFactory{}
+	pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
 
-    // act
-    testArgs := []string{""}
-    f.configureFlags(pflag.CommandLine)
-    f.parseFlags(testArgs)
-    config, err := generatePlatformServerConfig(f)
+	// act
+	testArgs := []string{""}
+	f.configureFlags(pflag.CommandLine)
+	f.parseFlags(testArgs)
+	config, err := generatePlatformServerConfig(f)
 
-    // assert
-    wd, _ := os.Getwd()
-    assert.Nil(t, err)
-    assert.EqualValues(t, "localhost", config.Host)
-    assert.EqualValues(t, 30080, config.Port)
-    assert.EqualValues(t, wd, config.RootDir)
-    assert.Empty(t, config.StaticDir)
-    assert.EqualValues(t, 5*time.Minute, config.ShutdownTimeout)
-    assert.EqualValues(t, "stdout", config.LogConfig.OutputLog)
-    assert.EqualValues(t, "stdout", config.LogConfig.AccessLog)
-    assert.EqualValues(t, "stderr", config.LogConfig.ErrorLog)
-    assert.EqualValues(t, wd, config.LogConfig.Root)
-    assert.False(t, config.Debug)
-    assert.False(t, config.NoBanner)
-    assert.EqualValues(t, time.Minute, config.RestBridgeTimeout)
-    assert.EqualValues(t, "/ws", config.FabricConfig.FabricEndpoint)
-    assert.EqualValues(t, "/topic", config.FabricConfig.EndpointConfig.TopicPrefix)
-    assert.EqualValues(t, "/queue", config.FabricConfig.EndpointConfig.UserQueuePrefix)
-    assert.EqualValues(t, "/pub", config.FabricConfig.EndpointConfig.AppRequestPrefix)
-    assert.EqualValues(t, "/pub/queue", config.FabricConfig.EndpointConfig.AppRequestQueuePrefix)
-    assert.EqualValues(t, 60000, config.FabricConfig.EndpointConfig.Heartbeat)
+	// assert
+	wd, _ := os.Getwd()
+	assert.Nil(t, err)
+	assert.EqualValues(t, "localhost", config.Host)
+	assert.EqualValues(t, 30080, config.Port)
+	assert.EqualValues(t, wd, config.RootDir)
+	assert.Empty(t, config.StaticDir)
+	assert.EqualValues(t, 5*time.Minute, config.ShutdownTimeout)
+	assert.EqualValues(t, "stdout", config.LogConfig.OutputLog)
+	assert.EqualValues(t, "stdout", config.LogConfig.AccessLog)
+	assert.EqualValues(t, "stderr", config.LogConfig.ErrorLog)
+	assert.EqualValues(t, wd, config.LogConfig.Root)
+	assert.False(t, config.Debug)
+	assert.False(t, config.NoBanner)
+	assert.EqualValues(t, time.Minute, config.RestBridgeTimeout)
+	assert.EqualValues(t, "/ws", config.FabricConfig.FabricEndpoint)
+	assert.EqualValues(t, "/topic", config.FabricConfig.EndpointConfig.TopicPrefix)
+	assert.EqualValues(t, "/queue", config.FabricConfig.EndpointConfig.UserQueuePrefix)
+	assert.EqualValues(t, "/pub", config.FabricConfig.EndpointConfig.AppRequestPrefix)
+	assert.EqualValues(t, "/pub/queue", config.FabricConfig.EndpointConfig.AppRequestQueuePrefix)
+	assert.EqualValues(t, 60000, config.FabricConfig.EndpointConfig.Heartbeat)
 }
 
 func TestGeneratePlatformServerConfig_CertConfig(t *testing.T) {
-    // arrange
-    f := &serverConfigFactory{}
-    pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
-    dummyCert := filepath.Join(os.TempDir(), "plank-tests", "cert.pem")
-    dummyKey := filepath.Join(os.TempDir(), "plank-tests", "key.pem")
+	// arrange
+	f := &serverConfigFactory{}
+	pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
+	dummyCert := filepath.Join(os.TempDir(), "plank-tests", "cert.pem")
+	dummyKey := filepath.Join(os.TempDir(), "plank-tests", "key.pem")
 
-    // act
-    testArgs := []string{"", "--cert", dummyCert, "--cert-key", dummyKey}
-    f.configureFlags(pflag.CommandLine)
-    f.parseFlags(testArgs)
-    config, err := generatePlatformServerConfig(f)
+	// act
+	testArgs := []string{"", "--cert", dummyCert, "--cert-key", dummyKey}
+	f.configureFlags(pflag.CommandLine)
+	f.parseFlags(testArgs)
+	config, err := generatePlatformServerConfig(f)
 
-    // assert
-    assert.Nil(t, err)
-    assert.EqualValues(t, dummyCert, config.TLSCertConfig.CertFile)
-    assert.EqualValues(t, dummyKey, config.TLSCertConfig.KeyFile)
+	// assert
+	assert.Nil(t, err)
+	assert.EqualValues(t, dummyCert, config.TLSCertConfig.CertFile)
+	assert.EqualValues(t, dummyKey, config.TLSCertConfig.KeyFile)
 }
 
 func TestGeneratePlatformServerConfig_SpaConfig(t *testing.T) {
-    // arrange
-    f := &serverConfigFactory{}
-    pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
-    spaRoot := filepath.Join(os.TempDir(), "plank-tests", "spaRoot")
+	// arrange
+	f := &serverConfigFactory{}
+	pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
+	spaRoot := filepath.Join(os.TempDir(), "plank-tests", "spaRoot")
 
-    // act
-    testArgs := []string{"", "--spa-path", spaRoot}
-    f.configureFlags(pflag.CommandLine)
-    f.parseFlags(testArgs)
-    config, err := generatePlatformServerConfig(f)
+	// act
+	testArgs := []string{"", "--spa-path", spaRoot}
+	f.configureFlags(pflag.CommandLine)
+	f.parseFlags(testArgs)
+	config, err := generatePlatformServerConfig(f)
 
-    // assert
-    assert.Nil(t, err)
-    assert.EqualValues(t, spaRoot, config.SpaConfig.RootFolder)
-    assert.EqualValues(t, "spaRoot", config.SpaConfig.BaseUri)
+	// assert
+	assert.Nil(t, err)
+	assert.EqualValues(t, spaRoot, config.SpaConfig.RootFolder)
+	assert.EqualValues(t, "spaRoot", config.SpaConfig.BaseUri)
 }
 
 func TestGeneratePlatformServerConfig_ConfigFile(t *testing.T) {
-    // arrange
-    f := &serverConfigFactory{}
-    pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
-    configFile, err := CreateConfigJsonForTest()
-    if err != nil {
-        assert.FailNow(t, err.Error())
-    }
-    defer os.RemoveAll(filepath.Dir(configFile))
+	// arrange
+	f := &serverConfigFactory{}
+	pflag.CommandLine = pflag.NewFlagSet("", pflag.ExitOnError)
+	configFile, err := CreateConfigJsonForTest()
+	if err != nil {
+		assert.FailNow(t, err.Error())
+	}
+	defer os.RemoveAll(filepath.Dir(configFile))
 
-    // act
-    testArgs := []string{"", "--config-file", configFile}
-    f.configureFlags(pflag.CommandLine)
-    f.parseFlags(testArgs)
-    config, err := generatePlatformServerConfig(f)
+	// act
+	testArgs := []string{"", "--config-file", configFile}
+	f.configureFlags(pflag.CommandLine)
+	f.parseFlags(testArgs)
+	config, err := generatePlatformServerConfig(f)
 
-    // assert
-    assert.Nil(t, err)
-    assert.EqualValues(t, "localhost", config.Host)
-    assert.EqualValues(t, 31234, config.Port)
-    assert.EqualValues(t, "./", config.RootDir)
-    assert.Empty(t, config.StaticDir)
-    assert.EqualValues(t, 5*time.Minute, config.ShutdownTimeout)
-    assert.EqualValues(t, "stdout", config.LogConfig.OutputLog)
-    assert.EqualValues(t, "access.log", config.LogConfig.AccessLog)
-    assert.EqualValues(t, "errors.log", config.LogConfig.ErrorLog)
-    assert.EqualValues(t, ".", config.LogConfig.Root)
-    assert.True(t, config.Debug)
-    assert.True(t, config.NoBanner)
-    assert.EqualValues(t, time.Minute, config.RestBridgeTimeout)
-    assert.EqualValues(t, "cert/server.key", config.TLSCertConfig.KeyFile)
-    assert.EqualValues(t, "cert/fullchain.pem", config.TLSCertConfig.CertFile)
-    assert.EqualValues(t, "/ws", config.FabricConfig.FabricEndpoint)
-    assert.EqualValues(t, "/topic", config.FabricConfig.EndpointConfig.TopicPrefix)
-    assert.EqualValues(t, "/queue", config.FabricConfig.EndpointConfig.UserQueuePrefix)
-    assert.EqualValues(t, "/pub", config.FabricConfig.EndpointConfig.AppRequestPrefix)
-    assert.EqualValues(t, "/pub/queue", config.FabricConfig.EndpointConfig.AppRequestQueuePrefix)
-    assert.EqualValues(t, 60000, config.FabricConfig.EndpointConfig.Heartbeat)
-    assert.EqualValues(t, "public/", config.SpaConfig.RootFolder)
-    assert.EqualValues(t, "/", config.SpaConfig.BaseUri)
-    assert.EqualValues(t, "public/assets:/assets", config.SpaConfig.StaticAssets[0])
+	// assert
+	assert.Nil(t, err)
+	assert.EqualValues(t, "localhost", config.Host)
+	assert.EqualValues(t, 31234, config.Port)
+	assert.EqualValues(t, "./", config.RootDir)
+	assert.Empty(t, config.StaticDir)
+	assert.EqualValues(t, 5*time.Minute, config.ShutdownTimeout)
+	assert.EqualValues(t, "stdout", config.LogConfig.OutputLog)
+	assert.EqualValues(t, "access.log", config.LogConfig.AccessLog)
+	assert.EqualValues(t, "errors.log", config.LogConfig.ErrorLog)
+	assert.EqualValues(t, ".", config.LogConfig.Root)
+	assert.True(t, config.Debug)
+	assert.True(t, config.NoBanner)
+	assert.EqualValues(t, time.Minute, config.RestBridgeTimeout)
+	assert.EqualValues(t, "cert/server.key", config.TLSCertConfig.KeyFile)
+	assert.EqualValues(t, "cert/fullchain.pem", config.TLSCertConfig.CertFile)
+	assert.EqualValues(t, "/ws", config.FabricConfig.FabricEndpoint)
+	assert.EqualValues(t, "/topic", config.FabricConfig.EndpointConfig.TopicPrefix)
+	assert.EqualValues(t, "/queue", config.FabricConfig.EndpointConfig.UserQueuePrefix)
+	assert.EqualValues(t, "/pub", config.FabricConfig.EndpointConfig.AppRequestPrefix)
+	assert.EqualValues(t, "/pub/queue", config.FabricConfig.EndpointConfig.AppRequestQueuePrefix)
+	assert.EqualValues(t, 60000, config.FabricConfig.EndpointConfig.Heartbeat)
+	assert.EqualValues(t, "public/", config.SpaConfig.RootFolder)
+	assert.EqualValues(t, "/", config.SpaConfig.BaseUri)
+	assert.EqualValues(t, "public/assets:/assets", config.SpaConfig.StaticAssets[0])
 }
 
 func TestMarshalResponseBody_byteSlice(t *testing.T) {
-    payload := []byte("hello")
-    results, err := ensureResponseInByteSlice(payload)
+	payload := []byte("hello")
+	results, err := ensureResponseInByteSlice(payload)
 
-    assert.Nil(t, err)
-    assert.EqualValues(t, payload, results)
+	assert.Nil(t, err)
+	assert.EqualValues(t, payload, results)
 }
 
 func TestMarshalResponseBody_nonByteSlice(t *testing.T) {
-    payload := PlatformServerConfig{}
-    jsonMarshalled, _ := json.Marshal(payload)
-    results, err := ensureResponseInByteSlice(payload)
+	payload := PlatformServerConfig{}
+	jsonMarshalled, _ := json.Marshal(payload)
+	results, err := ensureResponseInByteSlice(payload)
 
-    assert.Nil(t, err)
-    assert.EqualValues(t, jsonMarshalled, results)
+	assert.Nil(t, err)
+	assert.EqualValues(t, jsonMarshalled, results)
 }

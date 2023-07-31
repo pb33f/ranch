@@ -4,21 +4,21 @@
 package server
 
 import (
-    "errors"
-    "fmt"
-    "github.com/pb33f/ranch/bus"
-    "github.com/pb33f/ranch/model"
-    "github.com/pb33f/ranch/plank/utils"
-    svc "github.com/pb33f/ranch/service"
-    "github.com/sirupsen/logrus"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/suite"
-    "io/ioutil"
-    "net"
-    "os"
-    "path/filepath"
-    "testing"
-    "time"
+	"errors"
+	"fmt"
+	"github.com/pb33f/ranch/bus"
+	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/plank/utils"
+	svc "github.com/pb33f/ranch/service"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+	"io/ioutil"
+	"net"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
 var testSuitePortMap = make(map[string]int)
@@ -27,185 +27,185 @@ var testSuitePortMap = make(map[string]int)
 // In a realistic manner. This is a convenience mechanism to avoid having to rig this harnessing up yourself.
 type PlankIntegrationTestSuite struct {
 
-    // suite.Suite is a reference to a testify test suite.
-    suite.Suite
+	// suite.Suite is a reference to a testify test suite.
+	suite.Suite
 
-    // server.PlatformServer is a reference to plank
-    PlatformServer
+	// server.PlatformServer is a reference to plank
+	PlatformServer
 
-    // os.Signal is the signal channel passed into plan for OS level notifications.
-    Syschan chan os.Signal
+	// os.Signal is the signal channel passed into plan for OS level notifications.
+	Syschan chan os.Signal
 
-    // bus.ChannelManager is a reference to the Transport's Channel Manager.
-    bus.ChannelManager
+	// bus.ChannelManager is a reference to the Transport's Channel Manager.
+	bus.ChannelManager
 
-    // bus.EventBus is a reference to Transport.
-    bus.EventBus
+	// bus.EventBus is a reference to Transport.
+	bus.EventBus
 }
 
 // PlankIntegrationTest allows test suites that use PlankIntegrationTestSuite as an embedded struct to set everything
 // we need on our test. This is the only contract required to use this harness.
 type PlankIntegrationTest interface {
-    SetPlatformServer(PlatformServer)
-    SetSysChan(chan os.Signal)
-    SetChannelManager(bus.ChannelManager)
-    SetBus(eventBus bus.EventBus)
+	SetPlatformServer(PlatformServer)
+	SetSysChan(chan os.Signal)
+	SetChannelManager(bus.ChannelManager)
+	SetBus(eventBus bus.EventBus)
 }
 
 // SetupPlankTestSuiteForTest will copy over everything from the newly set up test suite, to a suite being run.
 func SetupPlankTestSuiteForTest(suite *PlankIntegrationTestSuite, test PlankIntegrationTest) {
-    test.SetPlatformServer(suite.PlatformServer)
-    test.SetSysChan(suite.Syschan)
-    test.SetChannelManager(suite.ChannelManager)
-    test.SetBus(suite.EventBus)
+	test.SetPlatformServer(suite.PlatformServer)
+	test.SetSysChan(suite.Syschan)
+	test.SetChannelManager(suite.ChannelManager)
+	test.SetBus(suite.EventBus)
 }
 
 // GetBasicTestServerConfig will generate a simple platform server config, ready to use in a test.
 func GetBasicTestServerConfig(rootDir, outLog, accessLog, errLog string, port int, noBanner bool) *PlatformServerConfig {
-    cfg := &PlatformServerConfig{
-        RootDir:           rootDir,
-        Host:              "localhost",
-        Port:              port,
-        RestBridgeTimeout: time.Minute,
-        LogConfig: &utils.LogConfig{
-            OutputLog:     outLog,
-            AccessLog:     accessLog,
-            ErrorLog:      errLog,
-            FormatOptions: &utils.LogFormatOption{},
-        },
-        NoBanner:        noBanner,
-        ShutdownTimeout: time.Minute,
-    }
-    return cfg
+	cfg := &PlatformServerConfig{
+		RootDir:           rootDir,
+		Host:              "localhost",
+		Port:              port,
+		RestBridgeTimeout: time.Minute,
+		LogConfig: &utils.LogConfig{
+			OutputLog:     outLog,
+			AccessLog:     accessLog,
+			ErrorLog:      errLog,
+			FormatOptions: &utils.LogFormatOption{},
+		},
+		NoBanner:        noBanner,
+		ShutdownTimeout: time.Minute,
+	}
+	return cfg
 }
 
 // SetupPlankTestSuite will boot a new instance of plank on your chosen port and will also fire up your service
 // Ready to be tested. This always runs on localhost.
 func SetupPlankTestSuite(service svc.FabricService, serviceChannel string, port int,
-    config *PlatformServerConfig) (*PlankIntegrationTestSuite, error) {
+	config *PlatformServerConfig) (*PlankIntegrationTestSuite, error) {
 
-    s := &PlankIntegrationTestSuite{}
+	s := &PlankIntegrationTestSuite{}
 
-    customFormatter := new(logrus.TextFormatter)
-    utils.Log.SetFormatter(customFormatter)
-    customFormatter.DisableTimestamp = true
+	customFormatter := new(logrus.TextFormatter)
+	utils.Log.SetFormatter(customFormatter)
+	customFormatter.DisableTimestamp = true
 
-    // check if config has been supplied, if not, generate default one.
-    if config == nil {
-        config = GetBasicTestServerConfig("/", "stdout", "stdout", "stderr", port, true)
-    }
+	// check if config has been supplied, if not, generate default one.
+	if config == nil {
+		config = GetBasicTestServerConfig("/", "stdout", "stdout", "stderr", port, true)
+	}
 
-    s.PlatformServer = NewPlatformServer(config)
-    if err := s.PlatformServer.RegisterService(service, serviceChannel); err != nil {
-        return nil, errors.New("cannot create printing press service, test failed")
-    }
+	s.PlatformServer = NewPlatformServer(config)
+	if err := s.PlatformServer.RegisterService(service, serviceChannel); err != nil {
+		return nil, errors.New("cannot create printing press service, test failed")
+	}
 
-    s.Syschan = make(chan os.Signal, 1)
-    go s.PlatformServer.StartServer(s.Syschan)
+	s.Syschan = make(chan os.Signal, 1)
+	go s.PlatformServer.StartServer(s.Syschan)
 
-    s.EventBus = bus.ResetBus()
-    svc.ResetServiceRegistry()
+	s.EventBus = bus.ResetBus()
+	svc.ResetServiceRegistry()
 
-    // get a pointer to the channel manager
-    s.ChannelManager = s.EventBus.GetChannelManager()
+	// get a pointer to the channel manager
+	s.ChannelManager = s.EventBus.GetChannelManager()
 
-    // wait, service may be slow loading, rest mapping happens last.
-    wait := make(chan bool)
-    go func() {
-        time.Sleep(10 * time.Millisecond)
-        wait <- true // Sending something to the channel to let the main thread continue
+	// wait, service may be slow loading, rest mapping happens last.
+	wait := make(chan bool)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		wait <- true // Sending something to the channel to let the main thread continue
 
-    }()
+	}()
 
-    <-wait
-    return s, nil
+	<-wait
+	return s, nil
 }
 
 // CreateTestServer consumes *server.PlatformServerConfig and returns a new instance of PlatformServer along with
 // its base URL and log file name
 func CreateTestServer(config *PlatformServerConfig) (baseUrl, logFile string, s PlatformServer) {
-    testServer := NewPlatformServer(config)
+	testServer := NewPlatformServer(config)
 
-    protocol := "http"
-    if config.TLSCertConfig != nil {
-        protocol += "s"
-    }
+	protocol := "http"
+	if config.TLSCertConfig != nil {
+		protocol += "s"
+	}
 
-    baseUrl = fmt.Sprintf("%s://%s:%d", protocol, config.Host, config.Port)
-    return baseUrl, config.LogConfig.OutputLog, testServer
+	baseUrl = fmt.Sprintf("%s://%s:%d", protocol, config.Host, config.Port)
+	return baseUrl, config.LogConfig.OutputLog, testServer
 }
 
 // RunWhenServerReady runs test function fn after Plank has booted up
 func RunWhenServerReady(t *testing.T, eventBus bus.EventBus, fn func(*testing.T)) {
-    handler, _ := eventBus.ListenOnce(RANCH_SERVER_ONLINE_CHANNEL)
-    handler.Handle(func(message *model.Message) {
-        fn(t)
-    }, func(err error) {
-        assert.FailNow(t, err.Error())
-    })
+	handler, _ := eventBus.ListenOnce(RANCH_SERVER_ONLINE_CHANNEL)
+	handler.Handle(func(message *model.Message) {
+		fn(t)
+	}, func(err error) {
+		assert.FailNow(t, err.Error())
+	})
 }
 
 // GetTestPort returns an available port for use by Plank tests
 func GetTestPort() int {
-    minPort := 9980
-    fr := utils.GetCallerStackFrame()
-    port, exists := testSuitePortMap[fr.File]
-    if exists {
-        return port
-    }
+	minPort := 9980
+	fr := utils.GetCallerStackFrame()
+	port, exists := testSuitePortMap[fr.File]
+	if exists {
+		return port
+	}
 
-    // try 5 more times with every failure advancing port by one
-    tryPort := minPort
-    for i := 0; i <= 4; i++ {
-        tryPort = minPort + len(testSuitePortMap) + i
-        _, err := net.Dial("tcp", fmt.Sprintf(":%d", tryPort))
-        if err == nil { // port in use, try next one
-            continue
-        }
+	// try 5 more times with every failure advancing port by one
+	tryPort := minPort
+	for i := 0; i <= 4; i++ {
+		tryPort = minPort + len(testSuitePortMap) + i
+		_, err := net.Dial("tcp", fmt.Sprintf(":%d", tryPort))
+		if err == nil { // port in use, try next one
+			continue
+		}
 
-        testSuitePortMap[fr.File] = tryPort
-        break
-    }
+		testSuitePortMap[fr.File] = tryPort
+		break
+	}
 
-    if testSuitePortMap[fr.File] == 0 { // port could not be assigned
-        panic(fmt.Errorf("could not assign a port for tests. last tried port is %d", tryPort))
-    }
+	if testSuitePortMap[fr.File] == 0 { // port could not be assigned
+		panic(fmt.Errorf("could not assign a port for tests. last tried port is %d", tryPort))
+	}
 
-    return testSuitePortMap[fr.File]
+	return testSuitePortMap[fr.File]
 }
 
 // GetTestTLSCertConfig returns a new &TLSCertConfig for testing.
 func GetTestTLSCertConfig(testRootPath string) *TLSCertConfig {
-    crtFile := filepath.Join(testRootPath, "test_server.crt")
-    keyFile := filepath.Join(testRootPath, "test_server.key")
-    _ = ioutil.WriteFile(crtFile, []byte(testServerCertTmpl), 0700)
-    _ = ioutil.WriteFile(keyFile, []byte(testServerKeyTmpl), 0700)
-    return &TLSCertConfig{
-        CertFile:                  crtFile,
-        KeyFile:                   keyFile,
-        SkipCertificateValidation: true,
-    }
+	crtFile := filepath.Join(testRootPath, "test_server.crt")
+	keyFile := filepath.Join(testRootPath, "test_server.key")
+	_ = ioutil.WriteFile(crtFile, []byte(testServerCertTmpl), 0700)
+	_ = ioutil.WriteFile(keyFile, []byte(testServerKeyTmpl), 0700)
+	return &TLSCertConfig{
+		CertFile:                  crtFile,
+		KeyFile:                   keyFile,
+		SkipCertificateValidation: true,
+	}
 }
 
 // GetTestFabricBrokerConfig returns a basic fabric broker config.
 func GetTestFabricBrokerConfig() *FabricBrokerConfig {
-    return &FabricBrokerConfig{
-        FabricEndpoint: "/ws",
-        UseTCP:         false,
-        TCPPort:        61613,
-        EndpointConfig: &bus.EndpointConfig{
-            TopicPrefix:           "/topic",
-            UserQueuePrefix:       "/queue",
-            AppRequestPrefix:      "/pub",
-            AppRequestQueuePrefix: "/pub/queue",
-            Heartbeat:             30000,
-        },
-    }
+	return &FabricBrokerConfig{
+		FabricEndpoint: "/ws",
+		UseTCP:         false,
+		TCPPort:        61613,
+		EndpointConfig: &bus.EndpointConfig{
+			TopicPrefix:           "/topic",
+			UserQueuePrefix:       "/queue",
+			AppRequestPrefix:      "/pub",
+			AppRequestQueuePrefix: "/pub/queue",
+			Heartbeat:             30000,
+		},
+	}
 }
 
 // CreateConfigJsonForTest creates and returns the path to a file containing the plank configuration in JSON format
 func CreateConfigJsonForTest() (string, error) {
-    configJsonContent := `{
+	configJsonContent := `{
   "debug": true,
   "no_banner": true,
   "root_dir": "./",
@@ -260,15 +260,15 @@ func CreateConfigJsonForTest() (string, error) {
     "key_file": "cert/server.key"
   }
 }`
-    testDir := filepath.Join(os.TempDir(), "plank-tests")
-    testFile := filepath.Join(testDir, "test-config.json")
-    err := os.MkdirAll(testDir, 0744)
-    if err != nil {
-        return "", err
-    }
-    err = ioutil.WriteFile(testFile, []byte(configJsonContent), 0744)
-    if err != nil {
-        return "", err
-    }
-    return testFile, nil
+	testDir := filepath.Join(os.TempDir(), "plank-tests")
+	testFile := filepath.Join(testDir, "test-config.json")
+	err := os.MkdirAll(testDir, 0744)
+	if err != nil {
+		return "", err
+	}
+	err = ioutil.WriteFile(testFile, []byte(configJsonContent), 0744)
+	if err != nil {
+		return "", err
+	}
+	return testFile, nil
 }

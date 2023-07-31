@@ -20,7 +20,7 @@ import (
 var webSocketURLChanTLS = make(chan string)
 var websocketURLTLS string
 
-//var srv Server
+// var srv Server
 var testTLS = &tls.Config{
 	InsecureSkipVerify: true,
 	MinVersion:         tls.VersionTLS12,

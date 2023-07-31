@@ -71,7 +71,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-//var srv Server
+// var srv Server
 var testBrokerAddress = ":51581"
 var httpServer *httptest.Server
 var tcpServer net.Listener
