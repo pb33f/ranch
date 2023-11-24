@@ -6,14 +6,13 @@ package middleware
 import (
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/pb33f/ranch/plank/utils"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 )
 
 type MiddlewareManager interface {
-
 	SetGlobalMiddleware(middleware []mux.MiddlewareFunc) error
 	SetNewMiddleware(route *mux.Route, middleware []mux.MiddlewareFunc) error
 	RemoveMiddleware(route *mux.Route) error
@@ -33,6 +32,7 @@ type middlewareManager struct {
 	originalHandlersMap map[string]http.HandlerFunc
 	router              *mux.Router
 	mu                  sync.Mutex
+	logger              *slog.Logger
 }
 
 func (m *middlewareManager) SetGlobalMiddleware(middleware []mux.MiddlewareFunc) error {
@@ -79,10 +79,10 @@ func (m *middlewareManager) SetNewMiddleware(route *mux.Route, middleware []mux.
 	route.Handler(handler)
 
 	for _, mw := range middleware {
-		utils.Log.Debugf("middleware '%v' registered for %s", mw, key)
+		m.logger.Debug("middleware registered", "name", mw, "key", key)
 	}
 
-	utils.Log.Infof("New middleware configured for REST bridge at %s", key)
+	m.logger.Info("New middleware configured for REST bridge", "key", key)
 
 	return nil
 }
@@ -100,13 +100,13 @@ func (m *middlewareManager) RemoveMiddleware(route *mux.Route) error {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			utils.Log.Errorln(r)
+			m.logger.Error(fmt.Sprint(r))
 		}
 	}()
 
 	(*m.endpointHandlerMap)[key] = m.originalHandlersMap[key]
 	route.Handler(m.originalHandlersMap[key])
-	utils.Log.Debugf("All middleware have been stripped from %s (%s)", uri, method)
+	m.logger.Debug("All middleware have been stripped", "url", uri, "method", method)
 
 	return nil
 }
@@ -169,10 +169,11 @@ func (m *middlewareManager) extractUriVerbFromMuxRoute(route *mux.Route) (string
 }
 
 // NewMiddlewareManager sets up a new middleware manager singleton instance
-func NewMiddlewareManager(endpointHandlerMapPtr *map[string]http.HandlerFunc, router *mux.Router) MiddlewareManager {
+func NewMiddlewareManager(endpointHandlerMapPtr *map[string]http.HandlerFunc, router *mux.Router, logger *slog.Logger) MiddlewareManager {
 	return &middlewareManager{
 		endpointHandlerMap:  endpointHandlerMapPtr,
 		originalHandlersMap: make(map[string]http.HandlerFunc),
 		router:              router,
+		logger:              logger,
 	}
 }

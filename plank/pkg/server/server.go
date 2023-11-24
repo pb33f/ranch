@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/spf13/pflag"
 	"io/ioutil"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -27,7 +28,6 @@ import (
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
-	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 )
 
@@ -36,9 +36,12 @@ const AllMethodsWildcard = "*" // every method, open the gates!
 
 // NewPlatformServer configures and returns a new platformServer instance
 func NewPlatformServer(config *PlatformServerConfig) PlatformServer {
-	if !checkConfigForLogConfig(config) {
-		utils.Log.Error("unable to create new platform server, log config not found")
-		return nil
+
+	// configure a default logger if none is provided
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}))
 	}
 
 	ps := new(platformServer)
@@ -50,13 +53,6 @@ func NewPlatformServer(config *PlatformServerConfig) PlatformServer {
 	ps.eventbus = bus.GetBus()
 	ps.initialize()
 	return ps
-}
-
-func checkConfigForLogConfig(config *PlatformServerConfig) bool {
-	if config.LogConfig != nil {
-		return true
-	}
-	return false
 }
 
 // NewPlatformServerFromConfig returns a new instance of PlatformServer based on the config JSON file provided as configPath
@@ -77,11 +73,6 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 	ps := new(platformServer)
 	ps.eventbus = bus.GetBus()
 	sanitizeConfigRootPath(&config)
-
-	// ensure references to file system paths are relative to config.RootDir
-	config.LogConfig.OutputLog = utils.JoinBasePathIfRelativeRegularFilePath(config.LogConfig.Root, config.LogConfig.OutputLog)
-	config.LogConfig.AccessLog = utils.JoinBasePathIfRelativeRegularFilePath(config.LogConfig.Root, config.LogConfig.AccessLog)
-	config.LogConfig.ErrorLog = utils.JoinBasePathIfRelativeRegularFilePath(config.LogConfig.Root, config.LogConfig.ErrorLog)
 
 	// handle invalid duration by setting it to the default value of 5 minutes
 	if config.ShutdownTimeout <= 0 {
@@ -120,7 +111,6 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 func CreateServerConfig() (*PlatformServerConfig, error) {
 	factory := &serverConfigFactory{}
 	factory.configureFlags(pflag.CommandLine)
-	//factory.parseFlags(os.Args)
 	return generatePlatformServerConfig(factory)
 }
 
@@ -145,17 +135,17 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 	go func() {
 		ps.ServerAvailability.Http = true
 		if ps.serverConfig.TLSCertConfig != nil {
-			utils.Log.Infof("[ranch] Yee-Haw! Starting up the ranch's HTTPS server at %s:%d with TLS", ps.serverConfig.Host, ps.serverConfig.Port)
+			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTPS server at %s:%d with TLS", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
 			if err := ps.HttpServer.ListenAndServeTLS(ps.serverConfig.TLSCertConfig.CertFile, ps.serverConfig.TLSCertConfig.KeyFile); err != nil {
 				if !errors.Is(err, http.ErrServerClosed) {
-					utils.Log.Fatalln(wrapError(errServerInit, err))
+					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
 				}
 			}
 		} else {
-			utils.Log.Infof("[ranch] Yee-Haw! Starting up the ranch's HTTP server at %s:%d", ps.serverConfig.Host, ps.serverConfig.Port)
+			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTP server", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
 			if err := ps.HttpServer.ListenAndServe(); err != nil {
 				if !errors.Is(err, http.ErrServerClosed) {
-					utils.Log.Fatalln(wrapError(errServerInit, err))
+					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
 				}
 			}
 		}
@@ -172,11 +162,11 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 				fabricEndpoint = ""
 			}
 			brokerLocation := fmt.Sprintf("%s:%d%s", ps.serverConfig.Host, fabricPort, fabricEndpoint)
-			utils.Log.Infof("[ranch] Hot-Dang! Starting up the ranch's STOMP message broker at %s", brokerLocation)
+			ps.serverConfig.Logger.Info("[ranch] hot-dang! starting up the ranch's STOMP message broker", "location", brokerLocation)
 			ps.ServerAvailability.Fabric = true
 
 			if err := ps.eventbus.StartFabricEndpoint(ps.fabricConn, *ps.serverConfig.FabricConfig.EndpointConfig); err != nil {
-				utils.Log.Fatalln(wrapError(errServerInit, err))
+				ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
 			}
 		}()
 	}
@@ -197,7 +187,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 		httpReady = err == nil
 		if !httpReady {
 			time.Sleep(1 * time.Millisecond)
-			utils.Log.Debugln("waiting for http server to be ready to accept connections")
+			ps.serverConfig.Logger.Debug("waiting for http server to be ready to accept connections")
 			continue
 		}
 		_ = ps.eventbus.SendResponseMessage(RANCH_SERVER_ONLINE_CHANNEL, true, nil)
@@ -209,7 +199,7 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 
 // StopServer attempts to gracefully stop the HTTP and STOMP server if running
 func (ps *platformServer) StopServer() {
-	utils.Log.Infoln("[ranch] Server shutting down... see you around soon, partner!")
+	ps.serverConfig.Logger.Info("[ranch] server shutting down... see you around soon, partner!")
 	ps.ServerAvailability.Http = false
 
 	baseCtx := context.Background()
@@ -219,8 +209,8 @@ func (ps *platformServer) StopServer() {
 		select {
 		case <-shutdownCtx.Done():
 			if errors.Is(shutdownCtx.Err(), context.DeadlineExceeded) {
-				utils.Log.Fatalf(
-					"Server failed to gracefully shut down after %s",
+				ps.serverConfig.Logger.Error(
+					"server failed to gracefully shut down after timeout", "timeout",
 					ps.serverConfig.ShutdownTimeout.String())
 			}
 		}
@@ -234,11 +224,11 @@ func (ps *platformServer) StopServer() {
 	for _, svcChannel := range svcRegistry.GetAllServiceChannels() {
 		hooks := lcm.GetOnServerShutdownService(svcChannel)
 		if hooks != nil {
-			utils.Log.Infof("Teardown in progress for service at '%s'", svcChannel)
+			ps.serverConfig.Logger.Info("teardown in progress for service", "channel", svcChannel)
 			wg.Add(1)
 			go func(cName string, h service.OnServerShutdownEnabled) {
 				h.OnServerShutdown()
-				utils.Log.Infof("Teardown completed for service at '%s'", cName)
+				ps.serverConfig.Logger.Info("teardown completed for service", "channel", cName)
 				wg.Done()
 
 			}(svcChannel, hooks)
@@ -248,13 +238,13 @@ func (ps *platformServer) StopServer() {
 	// start graceful shutdown
 	err := ps.HttpServer.Shutdown(shutdownCtx)
 	if err != nil {
-		utils.Log.Errorln(err)
+		ps.serverConfig.Logger.Error(err.Error())
 	}
 
 	if ps.fabricConn != nil {
 		err = ps.eventbus.StopFabricEndpoint()
 		if err != nil {
-			utils.Log.Errorln(err)
+			ps.serverConfig.Logger.Error(err.Error())
 		}
 		ps.ServerAvailability.Fabric = false
 	}
@@ -289,7 +279,7 @@ func (ps *platformServer) RegisterService(svc service.FabricService, svcChannel 
 	svcType := reflect.TypeOf(svc)
 
 	if err == nil {
-		utils.Log.Infof("[ranch] Service '%s' registered at channel '%s'", svcType.String(), svcChannel)
+		ps.serverConfig.Logger.Info("[ranch] Service registered", "name", svcType.String(), "channel", svcChannel)
 		svcLifecycleManager := service.GetServiceLifecycleManager()
 		var hooks service.OnServiceReadyEnabled
 		if hooks = svcLifecycleManager.GetOnReadyCapableService(svcChannel); hooks == nil {
@@ -297,7 +287,7 @@ func (ps *platformServer) RegisterService(svc service.FabricService, svcChannel 
 			storeManager := ps.eventbus.GetStoreManager()
 			store := storeManager.GetStore(service.ServiceReadyStore)
 			store.Put(svcChannel, true, service.ServiceInitStateChange)
-			utils.Log.Infof("[ranch] Service '%s' initialized successfully", svcType.String())
+			ps.serverConfig.Logger.Info("[ranch] service initialized successfully", "name", svcType.String())
 		}
 	}
 	return err
@@ -312,8 +302,8 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
 	endpointHandlerKey := bridgeConfig.Uri + "-" + bridgeConfig.Method
 
 	if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-		utils.Log.Warnf("[ranch] Endpoint '%s (%s)' is already associated with a handler. "+
-			"Try another endpoint or remove it before assigning a new handler", bridgeConfig.Uri, bridgeConfig.Method)
+		ps.serverConfig.Logger.Warn("[ranch] Endpoint is already associated with a handler, "+
+			"Try another endpoint or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
 		return
 	}
 
@@ -368,9 +358,9 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
 		panic("Concurrency write on router detected when running ")
 	}
 
-	utils.Log.Infof(
-		"[ranch] Service channel '%s' is now bridged to a REST endpoint %s (%s)",
-		bridgeConfig.ServiceChannel, bridgeConfig.Uri, bridgeConfig.Method)
+	ps.serverConfig.Logger.Info(
+		"[ranch] Service channel is bridged to a REST endpoint",
+		"channel", bridgeConfig.ServiceChannel, "url", bridgeConfig.Uri, "method", bridgeConfig.Method)
 }
 
 // SetHttpPathPrefixChannelBridge establishes a conduit between the transport service channel and a path prefix
@@ -382,8 +372,8 @@ func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.R
 	endpointHandlerKey := bridgeConfig.Uri + "-" + AllMethodsWildcard
 
 	if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-		utils.Log.Warnf("[ranch] Path prefix '%s (%s)' is already being handled. "+
-			"Try another prefix or remove it before assigning a new handler", bridgeConfig.Uri, bridgeConfig.Method)
+		ps.serverConfig.Logger.Warn("[ranch] Path prefix is already being handled. "+
+			"Try another prefix or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
 		return
 	}
 
@@ -427,9 +417,9 @@ func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.R
 		panic("Concurrency write on router detected when running SetHttpPathPrefixChannelBridge()")
 	}
 
-	utils.Log.Infof(
-		"[ranch] Service channel '%s' is now bridged to a REST path prefix '%s'",
-		bridgeConfig.ServiceChannel, bridgeConfig.Uri)
+	ps.serverConfig.Logger.Info(
+		"[ranch] Service channel is now bridged to a REST path prefix",
+		"channel", bridgeConfig.ServiceChannel, "url", bridgeConfig.Uri)
 
 }
 
@@ -483,7 +473,7 @@ func (ps *platformServer) clearHttpChannelBridgesForService(serviceChannel strin
 		methods, _ := r.GetMethods()
 		// do not want to copy over the routes that will be overridden
 		if lookupMap[name] {
-			utils.Log.Debugf("[ranch] route '%s' will be overridden so not copying over to the new router instance", name)
+			ps.serverConfig.Logger.Debug("[ranch] route will be overridden so not copying over to the new router instance", "route", name)
 		} else {
 			newRouter.Name(name).Path(path).Methods(methods...).Handler(handler)
 		}
@@ -494,7 +484,7 @@ func (ps *platformServer) clearHttpChannelBridgesForService(serviceChannel strin
 	existingMappings := ps.serviceChanToBridgeEndpoints[serviceChannel]
 	ps.serviceChanToBridgeEndpoints[serviceChannel] = make([]string, 0)
 	for _, handlerKey := range existingMappings {
-		utils.Log.Infof("[ranch] Removing existing service - REST mapping '%s' for service '%s'", handlerKey, serviceChannel)
+		ps.serverConfig.Logger.Info("[ranch] Removing existing service - REST mapping", "key", handlerKey, "channel", serviceChannel)
 		delete(ps.endpointHandlerMap, handlerKey)
 	}
 	return newRouter
@@ -514,9 +504,9 @@ func (ps *platformServer) loadGlobalHttpHandler(h *mux.Router) {
 	ps.router = h
 	ps.HttpServer.Handler = handlers.RecoveryHandler()(
 		//handlers.CompressHandler(
-		handlers.ProxyHeaders(
-			handlers.CombinedLoggingHandler(
-				ps.serverConfig.LogConfig.GetAccessLogFilePointer(), ps.router)))
+		handlers.ProxyHeaders(ps.router))
+	//handlers.CombinedLoggingHandler(
+	//	ps.serverConfig.LogConfig.GetAccessLogFilePointer(), ps.router)))
 }
 
 func (ps *platformServer) checkPortAvailability() {
@@ -525,8 +515,8 @@ func (ps *platformServer) checkPortAvailability() {
 
 	// connection should fail otherwise it means there's already a listener on the host+port combination, in which case we stop here
 	if err == nil {
-		utils.Log.Fatalf("Server could not start at %s:%d because another process is using it. Please try another endpoint.",
-			ps.serverConfig.Host, ps.serverConfig.Port)
+		ps.serverConfig.Logger.Error("Server could not start because another process is using the port - try another",
+			"host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
 	}
 }
 

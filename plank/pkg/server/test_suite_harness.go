@@ -10,7 +10,6 @@ import (
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/utils"
 	svc "github.com/pb33f/ranch/service"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"io/ioutil"
@@ -67,12 +66,12 @@ func GetBasicTestServerConfig(rootDir, outLog, accessLog, errLog string, port in
 		Host:              "localhost",
 		Port:              port,
 		RestBridgeTimeout: time.Minute,
-		LogConfig: &utils.LogConfig{
-			OutputLog:     outLog,
-			AccessLog:     accessLog,
-			ErrorLog:      errLog,
-			FormatOptions: &utils.LogFormatOption{},
-		},
+		//LogConfig: &utils.LogConfig{
+		//	OutputLog:     outLog,
+		//	AccessLog:     accessLog,
+		//	ErrorLog:      errLog,
+		//	FormatOptions: &utils.LogFormatOption{},
+		//},
 		NoBanner:        noBanner,
 		ShutdownTimeout: time.Minute,
 	}
@@ -85,10 +84,6 @@ func SetupPlankTestSuite(service svc.FabricService, serviceChannel string, port 
 	config *PlatformServerConfig) (*PlankIntegrationTestSuite, error) {
 
 	s := &PlankIntegrationTestSuite{}
-
-	customFormatter := new(logrus.TextFormatter)
-	utils.Log.SetFormatter(customFormatter)
-	customFormatter.DisableTimestamp = true
 
 	// check if config has been supplied, if not, generate default one.
 	if config == nil {
@@ -132,7 +127,7 @@ func CreateTestServer(config *PlatformServerConfig) (baseUrl, logFile string, s 
 	}
 
 	baseUrl = fmt.Sprintf("%s://%s:%d", protocol, config.Host, config.Port)
-	return baseUrl, config.LogConfig.OutputLog, testServer
+	return baseUrl, logFile, testServer
 }
 
 // RunWhenServerReady runs test function fn after Plank has booted up

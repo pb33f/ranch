@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/pb33f/ranch/model"
-	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"net/http"
 	"reflect"
@@ -18,7 +17,7 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if r := recover(); r != nil {
-				utils.Log.Errorln(r)
+				ps.serverConfig.Logger.Error(fmt.Sprint(r))
 				http.Error(w, "Internal Server Error", 500)
 			}
 		}()
@@ -37,11 +36,11 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 		case <-ctx.Done():
 			http.Error(
 				w,
-				fmt.Sprintf("No response received from service channel in %s, request timed out", restBridgeTimeout.String()), 500)
+				fmt.Sprintf("no response received from service channel in %s, request timed out", restBridgeTimeout.String()), 500)
 		case msg := <-msgChan:
 			if msg.Error != nil {
-				utils.Log.WithError(msg.Error).Errorf(
-					"Error received from channel %s:", svcChannel)
+				ps.serverConfig.Logger.Error(
+					"Error received from channel", "error", msg.Error, "channel", svcChannel)
 				http.Error(w, msg.Error.Error(), 500)
 			} else {
 				// only send the actual user payloadChannel not wrapper information
@@ -112,7 +111,8 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 
 					// write the non-error payload back.
 					if _, err = w.Write(respBodyBytes); err != nil {
-						utils.Log.WithError(err).Errorf("Error received from channel %s:", svcChannel)
+						ps.serverConfig.Logger.Error("error received from channel", "error",
+							err.Error(), "channel", svcChannel)
 						http.Error(w, err.Error(), 500)
 					}
 				}

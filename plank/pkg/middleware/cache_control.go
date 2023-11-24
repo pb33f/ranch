@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/gobwas/glob"
 	"github.com/gorilla/mux"
-	"github.com/pb33f/ranch/plank/utils"
 	"net/http"
 	"strings"
 	"time"
@@ -128,7 +127,6 @@ func parseGlobPatterns(globPatterns []string) []glob.Glob {
 	for _, exp := range globPatterns {
 		globP, err := glob.Compile(exp)
 		if err != nil {
-			utils.Log.Errorln("Ignoring invalid glob pattern provided as cache control matcher rule", err)
 			continue
 		}
 		results = append(results, globP)

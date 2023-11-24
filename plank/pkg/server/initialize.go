@@ -9,8 +9,6 @@ import (
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"github.com/pb33f/ranch/stompserver"
-	"github.com/sirupsen/logrus"
-	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"path/filepath"
@@ -40,21 +38,20 @@ func (ps *platformServer) initialize() {
 	ps.serviceChanToBridgeEndpoints = make(map[string][]string, 0)
 
 	// initialize log output streams
-	if err = ps.serverConfig.LogConfig.PrepareLogFiles(); err != nil {
-		panic(err)
-	}
+	//if err = ps.serverConfig.LogConfig.PrepareLogFiles(); err != nil {
+	//	panic(err)
+	//}
 
 	// alias outputLogFp as ps.out for platform log outputs
-	ps.out = ps.serverConfig.LogConfig.GetPlatformLogFilePointer()
+	//ps.out = ps.serverConfig.LogConfig.GetPlatformLogFilePointer()
 
 	// set logrus out writer options and assign output stream to ps.out
-	formatter := utils.CreateTextFormatterFromFormatOptions(ps.serverConfig.LogConfig.FormatOptions)
-	utils.Log.SetFormatter(formatter)
-	utils.Log.SetOutput(ps.out)
+	//formatter := utils.CreateTextFormatterFromFormatOptions(ps.serverConfig.LogConfig.FormatOptions)
+	//	utils.Log.SetFormatter(formatter)
+	//	utils.Log.SetOutput(ps.out)
 
 	// if debug flag is provided enable extra logging. also, enable profiling at port 6060
 	if ps.serverConfig.Debug {
-		utils.Log.SetLevel(logrus.DebugLevel)
 		go func() {
 			runtime.SetBlockProfileRate(1) // capture traces of all possible contended mutex holders
 			profilerRouter := mux.NewRouter()
@@ -63,7 +60,7 @@ func (ps *platformServer) initialize() {
 				panic(err)
 			}
 		}()
-		utils.Log.Debugln("Debug logging and profiling enabled. Available types of profiles at http://localhost:6060/debug/pprof")
+		ps.serverConfig.Logger.Debug("Debug logging and profiling enabled. Available types of profiles at http://localhost:6060/debug/pprof")
 	}
 
 	// set a new route handler
@@ -79,7 +76,7 @@ func (ps *platformServer) initialize() {
 	// register static paths
 	for _, dir := range ps.serverConfig.StaticDir {
 		p, uri := utils.DeriveStaticURIFromPath(dir)
-		utils.Log.Debugf("Serving static path %s at %s", p, uri)
+		ps.serverConfig.Logger.Debug("Serving static path", "path", p, "uri", uri)
 		ps.SetStaticRoute(uri, p)
 	}
 
@@ -88,19 +85,18 @@ func (ps *platformServer) initialize() {
 		Addr:         fmt.Sprintf(":%d", ps.serverConfig.Port),
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
-		ErrorLog:     log.New(ps.serverConfig.LogConfig.GetErrorLogFilePointer(), "ERROR ", log.LstdFlags),
 	}
 
 	// set up a listener to receive REST bridge configs for services and set them up according to their specs
 	lcmChanHandler, err := ps.eventbus.ListenStreamForDestination(service.LifecycleManagerChannelName, ps.eventbus.GetId())
 	if err != nil {
-		utils.Log.Fatalln(err)
+		ps.serverConfig.Logger.Error(err.Error())
 	}
 
 	lcmChanHandler.Handle(func(message *model.Message) {
 		request, ok := message.Payload.(*service.SetupRESTBridgeRequest)
 		if !ok {
-			utils.Log.Errorf("failed to set up REST bridge ")
+			ps.serverConfig.Logger.Error("failed to set up REST bridge ")
 		}
 
 		fabricSvc, _ := serviceRegistryInstance.GetService(request.ServiceChannel)
@@ -125,15 +121,15 @@ func (ps *platformServer) initialize() {
 				svcReadyStore.Put(request.ServiceChannel, <-readyChan, service.ServiceInitStateChange)
 				close(readyChan)
 			}
-			utils.Log.Infof("[ranch] Service '%s' initialized successfully", reflect.TypeOf(fabricSvc).String())
+			ps.serverConfig.Logger.Info("[ranch] service initialized successfully", "name", reflect.TypeOf(fabricSvc).String())
 		}
 
 	}, func(err error) {
-		utils.Log.Errorln(err)
+		ps.serverConfig.Logger.Error(err.Error())
 	})
 
 	// instantiate a new middleware manager
-	ps.middlewareManager = middleware.NewMiddlewareManager(&ps.endpointHandlerMap, ps.router)
+	ps.middlewareManager = middleware.NewMiddlewareManager(&ps.endpointHandlerMap, ps.router, ps.serverConfig.Logger)
 
 	// create an internal bus channel to notify significant changes in sessions such as disconnect
 	if ps.serverConfig.FabricConfig != nil {

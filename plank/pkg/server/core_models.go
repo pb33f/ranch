@@ -9,7 +9,8 @@ import (
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
-	"github.com/pb33f/ranch/plank/utils"
+	"log/slog"
+
 	"github.com/pb33f/ranch/service"
 	"github.com/pb33f/ranch/stompserver"
 	"golang.org/x/net/http2"
@@ -27,7 +28,7 @@ type PlatformServerConfig struct {
 	SpaConfig         *SpaConfig          `json:"spa_config"`                     // single page application configuration
 	Host              string              `json:"host"`                           // hostname for the server
 	Port              int                 `json:"port"`                           // port for the server
-	LogConfig         *utils.LogConfig    `json:"log_config"`                     // log configuration (plank, Http access and error logs)
+	Logger            *slog.Logger        `json:"-"`                              // logger instance
 	FabricConfig      *FabricBrokerConfig `json:"fabric_config"`                  // Fabric (websocket) configuration
 	TLSCertConfig     *TLSCertConfig      `json:"tls_config"`                     // TLS certificate configuration
 	Debug             bool                `json:"debug"`                          // enable debug logging

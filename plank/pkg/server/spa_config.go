@@ -49,7 +49,6 @@ func (s *SpaConfig) CollateCacheControlRules() {
 	for globP, rule := range s.CacheControlRules {
 		pair, err := middleware.NewCacheControlRulePair(globP, rule)
 		if err != nil {
-			utils.Log.Errorln("Ignoring invalid glob pattern provided as cache control matcher rule", err)
 			continue
 		}
 
