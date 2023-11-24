@@ -76,7 +76,7 @@ func (ps *platformServer) initialize() {
 	// register static paths
 	for _, dir := range ps.serverConfig.StaticDir {
 		p, uri := utils.DeriveStaticURIFromPath(dir)
-		ps.serverConfig.Logger.Debug("Serving static path", "path", p, "uri", uri)
+		ps.serverConfig.Logger.Info("Serving static path", "path", p, "uri", uri)
 		ps.SetStaticRoute(uri, p)
 	}
 

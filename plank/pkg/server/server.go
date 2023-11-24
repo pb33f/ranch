@@ -187,7 +187,6 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 		httpReady = err == nil
 		if !httpReady {
 			time.Sleep(1 * time.Millisecond)
-			ps.serverConfig.Logger.Debug("waiting for http server to be ready to accept connections")
 			continue
 		}
 		_ = ps.eventbus.SendResponseMessage(RANCH_SERVER_ONLINE_CHANNEL, true, nil)
