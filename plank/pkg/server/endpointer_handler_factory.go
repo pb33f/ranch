@@ -106,6 +106,10 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 						respBodyBytes = []byte(fmt.Sprint(respBody))
 					}
 
+					if response.HttpStatusCode != 0 {
+						w.WriteHeader(response.HttpStatusCode)
+					}
+
 					// write the non-error payload back.
 					if _, err = w.Write(respBodyBytes); err != nil {
 						utils.Log.WithError(err).Errorf("Error received from channel %s:", svcChannel)

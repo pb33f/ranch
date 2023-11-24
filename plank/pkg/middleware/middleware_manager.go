@@ -13,6 +13,7 @@ import (
 )
 
 type MiddlewareManager interface {
+
 	SetGlobalMiddleware(middleware []mux.MiddlewareFunc) error
 	SetNewMiddleware(route *mux.Route, middleware []mux.MiddlewareFunc) error
 	RemoveMiddleware(route *mux.Route) error

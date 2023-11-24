@@ -1,9 +1,12 @@
+// 2023 Princess B33f Heavy Industries / Dave Shanley
+
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
 package bridge
 
 import (
+	"context"
 	"fmt"
 	"github.com/go-stomp/stomp/v3"
 	"github.com/go-stomp/stomp/v3/frame"
@@ -21,6 +24,8 @@ type Connection interface {
 	SendJSONMessage(destination string, payload []byte, opts ...func(*frame.Frame) error) error
 	SendMessage(destination, contentType string, payload []byte, opts ...func(*frame.Frame) error) error
 	SendMessageWithReplyDestination(destination, replyDestination, contentType string, payload []byte, opts ...func(*frame.Frame) error) error
+	Conversation(destination string, payload []byte, opts ...func(*frame.Frame) error) (Subscription, error)
+	RequestResponse(ctx context.Context, payload []byte, opts ...func(*frame.Frame) error) (*model.Message, error)
 }
 
 // Connection represents a Connection to a message broker.
@@ -36,6 +41,42 @@ type connection struct {
 
 func (c *connection) GetId() *uuid.UUID {
 	return c.id
+}
+
+// Conversation is a convenience method that will subscribe to a destination, send a JSON message to that destination
+func (c *connection) Conversation(destination string, payload []byte, opts ...func(*frame.Frame) error) (Subscription, error) {
+	sub, e := c.Subscribe(destination)
+	if e != nil {
+		return sub, e
+	}
+	e = c.SendJSONMessage(fmt.Sprintf("/pub%s", destination), payload, opts...)
+	return sub, e
+}
+
+// RequestResponse is a convenience method that will subscribe to a destination, send a JSON message to that destination and wait for a single
+// response and then return. It's a synchronous way to access an asynchronous API. The context provides a cancellable / deadline driven timeout
+// and should hold a value of "destination" to provide the destination.
+func (c *connection) RequestResponse(ctx context.Context, payload []byte, opts ...func(*frame.Frame) error) (*model.Message, error) {
+	destination := ctx.Value("destination").(string)
+	sub, e := c.Subscribe(destination)
+	if e != nil {
+		return nil, e
+	}
+	e = c.SendJSONMessage(fmt.Sprintf("/pub%s", destination), payload, opts...)
+	if e != nil {
+		return nil, e
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		case msg := <-sub.GetMsgChannel():
+			return msg, nil
+		}
+	}
 }
 
 // Subscribe to a destination, only one subscription can exist for a destination

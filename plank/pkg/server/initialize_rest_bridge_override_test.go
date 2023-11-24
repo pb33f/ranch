@@ -73,7 +73,7 @@ func TestInitialize_RestBridgeOverride(t *testing.T) {
 					Uri:            "/ping-new",
 					Method:         "GET",
 					FabricRequestBuilder: func(w http.ResponseWriter, r *http.Request) model.Request {
-						return model.Request{Id: &uuid.UUID{}, Request: "ping-get", Payload: r.URL.Query().Get("message")}
+						return model.Request{Id: &uuid.UUID{}, RequestCommand: "ping-get", Payload: r.URL.Query().Get("message")}
 					},
 				},
 			},

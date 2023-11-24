@@ -35,12 +35,6 @@ func checkConfig(config *BrokerConnectorConfig) error {
 	if config.ServerAddr == "" {
 		return fmt.Errorf("config invalid, config missing server address")
 	}
-	if config.Username == "" {
-		return fmt.Errorf("config invalid, config missing username")
-	}
-	if config.Password == "" {
-		return fmt.Errorf("config invalid, config missing password")
-	}
 
 	// if TLS is being used and no default values are passed, use defaults, so we don't add
 	// cognitive load to using the client with just the basics.

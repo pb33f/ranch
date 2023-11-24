@@ -12,6 +12,7 @@ import (
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"github.com/pb33f/ranch/stompserver"
+	"golang.org/x/net/http2"
 	"io"
 	"net/http"
 	"os"
@@ -54,6 +55,7 @@ type FabricBrokerConfig struct {
 type PlatformServer interface {
 	StartServer(syschan chan os.Signal)                                         // start server
 	StopServer()                                                                // stop server
+	GetRouter() *mux.Router                                                     // get *mux.Router instance
 	RegisterService(svc service.FabricService, svcChannel string) error         // register a new service at given channel
 	SetHttpChannelBridge(bridgeConfig *service.RESTBridgeConfig)                // set up a REST bridge for a service
 	SetStaticRoute(prefix, fullpath string, middlewareFn ...mux.MiddlewareFunc) // set up a static content route
@@ -67,6 +69,7 @@ type PlatformServer interface {
 // platformServer is the main struct that holds all components together including servers, various managers etc.
 type platformServer struct {
 	HttpServer                   *http.Server                      // Http server instance
+	Http2Server                  *http2.Server                     // Http server instance
 	SyscallChan                  chan os.Signal                    // syscall channel to receive SIGINT, SIGKILL events
 	eventbus                     bus.EventBus                      // event bus pointer
 	serverConfig                 *PlatformServerConfig             // server config instance

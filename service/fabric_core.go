@@ -31,6 +31,9 @@ type FabricServiceCore interface {
 	// set as HTTP response headers. Great for custom mime-types, binary stuff and more.
 	SendResponseWithHeaders(request *model.Request, responsePayload interface{}, headers map[string]any)
 
+	// SendResponseWithHeadersAndCode is the same as SendResponseWithHeaders, but inclides a custom HTTP status code.
+	SendResponseWithHeadersAndCode(request *model.Request, responsePayload interface{}, headers map[string]any, code int)
+
 	// SendErrorResponse builds an error model.Response object and sends it on the service channel as response to the "request" param.
 	SendErrorResponse(request *model.Request, responseErrorCode int, responseErrorMessage string)
 
@@ -135,6 +138,22 @@ func (core *fabricCore) SendResponseWithHeaders(request *model.Request, response
 		Marshal:           true,
 		BrokerDestination: request.BrokerDestination,
 		Headers:           headers,
+	}
+	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+}
+
+func (core *fabricCore) SendResponseWithHeadersAndCode(request *model.Request, responsePayload interface{}, headers map[string]any, code int) {
+
+	headers = core.mergeHeadersWithDefaults(headers)
+
+	response := &model.Response{
+		Id:                request.Id,
+		Destination:       core.channelName,
+		Payload:           responsePayload,
+		Marshal:           true,
+		BrokerDestination: request.BrokerDestination,
+		Headers:           headers,
+		HttpStatusCode:    code,
 	}
 	core.bus.SendResponseMessage(core.channelName, response, request.Id)
 }

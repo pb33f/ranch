@@ -161,7 +161,7 @@ func (bus *transportEventBus) init() {
 	bus.bc = bridge.NewBrokerConnector()
 	bus.monitor = newMonitor()
 	if enableLogging {
-		fmt.Printf("🌈 Transport booted with Id [%s]\n", bus.Id.String())
+		fmt.Printf("🌈 ranch booted with Id [%s]\n", bus.Id.String())
 	}
 }
 

@@ -9,13 +9,14 @@ import (
 
 // Response represents a payload sent by a Fabric application.
 type Response struct {
-	Id           *uuid.UUID  `json:"id,omitempty"`
-	Destination  string      `json:"channel,omitempty"`
-	Payload      interface{} `json:"payload,omitempty"`
-	Error        bool        `json:"error,omitempty"`
-	ErrorCode    int         `json:"errorCode,omitempty"`
-	ErrorMessage string      `json:"errorMessage,omitempty"`
-	ErrorObject  interface{} `json:"errorObject,omitempty"`
+	Id             *uuid.UUID  `json:"id,omitempty"`
+	Destination    string      `json:"channel,omitempty"`
+	Payload        interface{} `json:"payload,omitempty"`
+	HttpStatusCode int         `json:"httpStatusCode,omitempty"`
+	Error          bool        `json:"error,omitempty"`
+	ErrorCode      int         `json:"errorCode,omitempty"`
+	ErrorMessage   string      `json:"errorMessage,omitempty"`
+	ErrorObject    interface{} `json:"errorObject,omitempty"`
 	// If populated the response will be sent to a single client
 	// on the specified destination topic.
 	BrokerDestination *BrokerDestinationConfig `json:"-"`

@@ -19,6 +19,10 @@ import (
 	"time"
 )
 
+func (ps *platformServer) GetRouter() *mux.Router {
+	return ps.router
+}
+
 // initialize sets up basic configurations according to the serverConfig object such as setting output writer,
 // log formatter, creating a router instance, and setting up an HttpServer instance.
 func (ps *platformServer) initialize() {
