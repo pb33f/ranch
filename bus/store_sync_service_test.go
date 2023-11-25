@@ -53,16 +53,16 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 	id := uuid.New()
 	bus.SendRequestMessage(syncChan, "invalid-request", nil)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: "invalid-payload",
-		Id:      &id,
+		RequestCommand: openStoreRequest,
+		Payload:        "invalid-payload",
+		Id:             &id,
 	}, nil)
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: make(map[string]interface{}),
-		Id:      &id,
+		RequestCommand: openStoreRequest,
+		Payload:        make(map[string]interface{}),
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -72,9 +72,9 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "non-existing-store"},
-		Id:      &id,
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "non-existing-store"},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -111,8 +111,8 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -135,8 +135,8 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -157,8 +157,8 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -230,33 +230,33 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 
 	wg.Add(2)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
 	assert.Equal(t, len(service.syncStoreListeners["test-store"].clientSyncChannels), 2)
 
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: closeStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Id:             &id,
 	}, nil)
 
 	wg.Add(2)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: closeStoreRequest,
-		Payload: make(map[string]interface{}),
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        make(map[string]interface{}),
+		Id:             &id,
 	}, nil)
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: closeStoreRequest,
-		Payload: map[string]interface{}{"storeId": ""},
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        map[string]interface{}{"storeId": ""},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -272,21 +272,21 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 	service.lock.Unlock()
 
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: closeStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Id:             &id,
 	}, nil)
 
 	wg.Add(2)
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: closeStoreRequest,
-		Payload: make(map[string]interface{}),
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        make(map[string]interface{}),
+		Id:             &id,
 	}, nil)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: closeStoreRequest,
-		Payload: map[string]interface{}{"storeId": ""},
-		Id:      &id,
+		RequestCommand: closeStoreRequest,
+		Payload:        map[string]interface{}{"storeId": ""},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -323,9 +323,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
-		Payload: map[string]interface{}{},
-		Id:      &id,
+		RequestCommand: updateStoreRequest,
+		Payload:        map[string]interface{}{},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -333,9 +333,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
-		Id:      &id,
+		RequestCommand: updateStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -343,9 +343,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store", "itemId": "item1"},
-		Id:      &id,
+		RequestCommand: updateStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store", "itemId": "item1"},
+		Id:             &id,
 	}, nil)
 	wg.Wait()
 
@@ -392,12 +392,12 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 
 	wg.Add(2)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	bus.SendRequestMessage(syncChan2, &model.Request{
-		Request: openStoreRequest,
-		Payload: map[string]interface{}{"storeId": "test-store"},
+		RequestCommand: openStoreRequest,
+		Payload:        map[string]interface{}{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -407,7 +407,7 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	wg.Add(2)
 
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
+		RequestCommand: updateStoreRequest,
 		Payload: map[string]interface{}{
 			"storeId": "test-store",
 			"itemId":  "item3",
@@ -469,7 +469,7 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	assert.Equal(t, syncResp1[3], syncResp2[3])
 
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
+		RequestCommand: updateStoreRequest,
 		Payload: map[string]interface{}{
 			"storeId":      "test-store",
 			"itemId":       "item4",
@@ -478,7 +478,7 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 
 	wg.Add(2)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
+		RequestCommand: updateStoreRequest,
 		Payload: map[string]interface{}{
 			"storeId":      "test-store",
 			"itemId":       "item3",
@@ -501,7 +501,7 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 
 	wg.Add(1)
 	bus.SendRequestMessage(syncChan, &model.Request{
-		Request: updateStoreRequest,
+		RequestCommand: updateStoreRequest,
 		Payload: map[string]interface{}{
 			"storeId":      "test-store",
 			"itemId":       "item3",

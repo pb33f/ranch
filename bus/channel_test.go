@@ -4,6 +4,7 @@
 package bus
 
 import (
+	"context"
 	"github.com/go-stomp/stomp/v3/frame"
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bridge"
@@ -245,6 +246,16 @@ func TestChannel_CheckIfBrokerSubscribed(t *testing.T) {
 type MockBridgeConnection struct {
 	mock.Mock
 	Id *uuid.UUID
+}
+
+func (c *MockBridgeConnection) Conversation(destination string, payload []byte, opts ...func(*frame.Frame) error) (bridge.Subscription, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *MockBridgeConnection) RequestResponse(ctx context.Context, payload []byte, opts ...func(*frame.Frame) error) (*model.Message, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (c *MockBridgeConnection) GetId() *uuid.UUID {

@@ -18,7 +18,7 @@ func TestMessage_CastPayloadToType_HappyPath(t *testing.T) {
 
 	// assert
 	assert.Nil(t, err)
-	assert.EqualValues(t, "dummy-value-coming-through", dest.Request)
+	assert.EqualValues(t, "dummy-value-coming-through", dest.RequestCommand)
 }
 
 func TestMessage_CastPayloadToType_BadPayload(t *testing.T) {
@@ -35,7 +35,7 @@ func TestMessage_CastPayloadToType_BadPayload(t *testing.T) {
 	// assert
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "failed to unmarshal payload")
-	assert.NotEqual(t, "dummy-value-coming-through", dest.Request)
+	assert.NotEqual(t, "dummy-value-coming-through", dest.RequestCommand)
 }
 
 func TestMessage_CastPayloadToType_NonPointer(t *testing.T) {
@@ -48,7 +48,7 @@ func TestMessage_CastPayloadToType_NonPointer(t *testing.T) {
 
 	// assert
 	assert.NotNil(t, err)
-	assert.NotEqual(t, "dummy-value-coming-through", dest.Request)
+	assert.NotEqual(t, "dummy-value-coming-through", dest.RequestCommand)
 }
 
 func TestMessage_CastPayloadToType_NilPointer(t *testing.T) {
@@ -108,7 +108,7 @@ func TestMessage_CastPayloadToType_ErrorResponse(t *testing.T) {
 func getNewTestMessage() *Message {
 	rspPayload := &Response{
 		Id:      &uuid.UUID{},
-		Payload: Request{Request: "dummy-value-coming-through"},
+		Payload: Request{RequestCommand: "dummy-value-coming-through"},
 	}
 
 	jsonEncoded, _ := json.Marshal(rspPayload)

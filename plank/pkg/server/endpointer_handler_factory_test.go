@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bus"
@@ -64,7 +63,7 @@ func TestBuildEndpointHandler_SuccessResponse(t *testing.T) {
 		uId := &uuid.UUID{}
 		msgChan <- &model.Message{Payload: &model.Response{
 			Id:      uId,
-			Payload: []byte("{\"error\": false}"),
+			Payload: "{\"error\": false}",
 		}}
 		return model.Request{
 			Id:             uId,
@@ -83,15 +82,16 @@ func TestBuildEndpointHandler_ErrorResponse(t *testing.T) {
 	ps := NewPlatformServer(config).(*platformServer)
 	ps.eventbus = b
 
+	expected := `{"error": true}`
+
 	msgChan := make(chan *model.Message, 1)
 	uId := &uuid.UUID{}
 	rsp := &model.Response{
 		Id:        uId,
-		Payload:   "{\"error\": true}",
+		Payload:   expected,
 		ErrorCode: 500,
 		Error:     true,
 	}
-	expected, _ := json.Marshal(rsp.Payload)
 
 	assert.HTTPBodyContains(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		msgChan <- &model.Message{Payload: rsp}
@@ -101,7 +101,7 @@ func TestBuildEndpointHandler_ErrorResponse(t *testing.T) {
 			RequestCommand: "test-request",
 		}
 
-	}, 5*time.Second, msgChan), "GET", "http://localhost", nil, string(expected))
+	}, 5*time.Second, msgChan), "GET", "http://localhost", nil, expected)
 }
 
 func TestBuildEndpointHandler_ErrorResponseAlternative(t *testing.T) {

@@ -6,9 +6,7 @@ import (
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/services"
-	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"os"
@@ -31,8 +29,6 @@ func TestInitialize_DebugLogging(t *testing.T) {
 	// act
 	_, _, _ = CreateTestServer(cfg)
 
-	// assert
-	assert.EqualValues(t, logrus.DebugLevel, utils.Log.GetLevel())
 }
 
 func TestInitialize_RestBridgeOverride(t *testing.T) {

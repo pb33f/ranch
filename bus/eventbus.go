@@ -462,8 +462,8 @@ func (bus *transportEventBus) StartFabricEndpoint(
 	connectionListener stompserver.RawConnectionListener, config EndpointConfig) error {
 
 	if bus.fabEndpoint != nil {
-		return nil
-		// return fmt.Errorf("unable to start: fabric endpoint is already running")
+		//return nil
+		return fmt.Errorf("unable to start: fabric endpoint is already running")
 	}
 	if configErr := config.validate(); configErr != nil {
 		return configErr

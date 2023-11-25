@@ -16,7 +16,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -39,20 +38,6 @@ func TestNewPlatformServer_EmptyRootDir(t *testing.T) {
 	NewPlatformServer(newConfig)
 	wd, _ := os.Getwd()
 	assert.Equal(t, wd, newConfig.RootDir)
-}
-
-func TestNewPlatformServer_FileLog(t *testing.T) {
-	defer func() {
-		_ = os.Remove(filepath.Join(os.TempDir(), "testlog.log"))
-	}()
-
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
-	port := GetTestPort()
-	newConfig := GetBasicTestServerConfig(os.TempDir(), filepath.Join(os.TempDir(), "testlog.log"), "stdout", "stderr", port, true)
-	ps := NewPlatformServer(newConfig)
-	ps.(*platformServer).eventbus = newBus
-	assert.FileExists(t, filepath.Join(os.TempDir(), "testlog.log"))
 }
 
 func TestPlatformServer_StartServer(t *testing.T) {

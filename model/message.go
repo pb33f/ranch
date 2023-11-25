@@ -74,5 +74,7 @@ func decodeResponsePaylod(resp *Response, typ interface{}) error {
 	if resp.Error {
 		return errors.New(resp.ErrorMessage)
 	}
-	return mapstructure.Decode(resp.Payload, typ)
+	err := mapstructure.Decode(resp.Payload, typ)
+
+	return err
 }

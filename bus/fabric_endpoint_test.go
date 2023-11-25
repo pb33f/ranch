@@ -347,9 +347,9 @@ func TestFabricEndpoint_BridgeMessage(t *testing.T) {
 
 	id1 := uuid.New()
 	req1, _ := json.Marshal(model.Request{
-		Request: "test-request",
-		Payload: "test-rq",
-		Id:      &id1,
+		RequestCommand: "test-request",
+		Payload:        "test-rq",
+		Id:             &id1,
 	})
 
 	wg.Add(1)
@@ -363,9 +363,9 @@ func TestFabricEndpoint_BridgeMessage(t *testing.T) {
 
 	id2 := uuid.New()
 	req2, _ := json.Marshal(model.Request{
-		Request: "test-request2",
-		Payload: "test-rq2",
-		Id:      &id2,
+		RequestCommand: "test-request2",
+		Payload:        "test-rq2",
+		Id:             &id2,
 	})
 
 	wg.Wait()
@@ -378,14 +378,14 @@ func TestFabricEndpoint_BridgeMessage(t *testing.T) {
 
 	receivedReq := messages[0].Payload.(*model.Request)
 
-	assert.Equal(t, receivedReq.Request, "test-request")
+	assert.Equal(t, receivedReq.RequestCommand, "test-request")
 	assert.Equal(t, receivedReq.Payload, "test-rq")
 	assert.Equal(t, *receivedReq.Id, id1)
 	assert.Nil(t, receivedReq.BrokerDestination)
 
 	receivedReq2 := messages[1].Payload.(*model.Request)
 
-	assert.Equal(t, receivedReq2.Request, "test-request2")
+	assert.Equal(t, receivedReq2.RequestCommand, "test-request2")
 	assert.Equal(t, receivedReq2.Payload, "test-rq2")
 	assert.Equal(t, *receivedReq2.Id, id2)
 	assert.Equal(t, receivedReq2.BrokerDestination.ConnectionId, "con2")

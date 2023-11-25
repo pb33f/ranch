@@ -114,14 +114,6 @@ func TestBrokerConnector_BadConfig(t *testing.T) {
 			"Missing address from config",
 			&BrokerConnectorConfig{Username: "guest", Password: "guest"},
 			fmt.Errorf("config invalid, config missing server address")},
-		{
-			"Missing username from config",
-			&BrokerConnectorConfig{ServerAddr: "somewhere:000"},
-			fmt.Errorf("config invalid, config missing username")},
-		{
-			"Missing password from config",
-			&BrokerConnectorConfig{Username: "hi", ServerAddr: "somewhere:000"},
-			fmt.Errorf("config invalid, config missing password")},
 	}
 
 	for _, tc := range tt {

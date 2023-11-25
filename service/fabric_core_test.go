@@ -47,8 +47,8 @@ func TestFabricCore_SendMethods(t *testing.T) {
 
 	id := uuid.New()
 	req := model.Request{
-		Id:      &id,
-		Request: "test-request",
+		Id:             &id,
+		RequestCommand: "test-request",
 		BrokerDestination: &model.BrokerDestinationConfig{
 			Destination: "test",
 		},
@@ -68,7 +68,7 @@ func TestFabricCore_SendMethods(t *testing.T) {
 	assert.Equal(t, response.BrokerDestination.Destination, "test")
 
 	wg.Add(1)
-	h := make(map[string]string)
+	h := make(map[string]any)
 	h["hello"] = "there"
 	core.SendResponseWithHeaders(&req, "test-response-with-headers", h)
 	wg.Wait()
@@ -98,7 +98,7 @@ func TestFabricCore_SendMethods(t *testing.T) {
 
 	wg.Add(1)
 
-	h = make(map[string]string)
+	h = make(map[string]any)
 	h["chicken"] = "nugget"
 	core.SendErrorResponseWithHeaders(&req, 422, "test-header-error", h)
 	wg.Wait()
@@ -115,7 +115,7 @@ func TestFabricCore_SendMethods(t *testing.T) {
 
 	wg.Add(1)
 
-	h = make(map[string]string)
+	h = make(map[string]any)
 	h["potato"] = "dog"
 	core.SendErrorResponseWithHeadersAndPayload(&req, 500, "test-header-payload-error", "oh my!", h)
 	wg.Wait()
@@ -313,7 +313,7 @@ func TestFabricCore_SetDefaultJSONHeadersEmpty(t *testing.T) {
 	}
 
 	wg.Add(1)
-	core.SendResponseWithHeaders(&req, "test-response", map[string]string{"Content-Type": "pizza/cake"})
+	core.SendResponseWithHeaders(&req, "test-response", map[string]any{"Content-Type": "pizza/cake"})
 	wg.Wait()
 
 	response := lastMessage.Payload.(*model.Response)
