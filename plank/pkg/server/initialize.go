@@ -67,11 +67,11 @@ func (ps *platformServer) initialize() {
 	ps.router = mux.NewRouter().Schemes("http", "https").Subrouter()
 
 	// register a reserved path /health for use with container orchestration layer like k8s
-	ps.endpointHandlerMap["/health"] = func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("OK"))
-	}
-	ps.router.Path("/health").Name("/health").Handler(
-		middleware.CacheControlMiddleware([]string{"/health"}, middleware.NewCacheControlDirective().NoStore())(ps.endpointHandlerMap["/health"]))
+	//ps.endpointHandlerMap["/health"] = func(w http.ResponseWriter, r *http.Request) {
+	//	_, _ = w.Write([]byte("OK"))
+	//}
+	//ps.router.Path("/health").Name("/health").Handler(
+	//	middleware.CacheControlMiddleware([]string{"/health"}, middleware.NewCacheControlDirective().NoStore())(ps.endpointHandlerMap["/health"]))
 
 	// register static paths
 	for _, dir := range ps.serverConfig.StaticDir {

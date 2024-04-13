@@ -132,25 +132,6 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 	// then all other routes registered after SPA route will be masked away.
 	ps.configureSPA()
 
-	go func() {
-		ps.ServerAvailability.Http = true
-		if ps.serverConfig.TLSCertConfig != nil {
-			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTPS server at %s:%d with TLS", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
-			if err := ps.HttpServer.ListenAndServeTLS(ps.serverConfig.TLSCertConfig.CertFile, ps.serverConfig.TLSCertConfig.KeyFile); err != nil {
-				if !errors.Is(err, http.ErrServerClosed) {
-					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
-				}
-			}
-		} else {
-			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTP server", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
-			if err := ps.HttpServer.ListenAndServe(); err != nil {
-				if !errors.Is(err, http.ErrServerClosed) {
-					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
-				}
-			}
-		}
-	}()
-
 	// if Fabric broker configuration is found, start the broker
 	if ps.serverConfig.FabricConfig != nil {
 		go func() {
@@ -170,6 +151,25 @@ func (ps *platformServer) StartServer(syschan chan os.Signal) {
 			}
 		}()
 	}
+
+	go func() {
+		ps.ServerAvailability.Http = true
+		if ps.serverConfig.TLSCertConfig != nil {
+			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTPS server at %s:%d with TLS", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
+			if err := ps.HttpServer.ListenAndServeTLS(ps.serverConfig.TLSCertConfig.CertFile, ps.serverConfig.TLSCertConfig.KeyFile); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
+				}
+			}
+		} else {
+			ps.serverConfig.Logger.Info("[ranch] yee-haw! starting up the ranch's HTTP server", "host", ps.serverConfig.Host, "port", ps.serverConfig.Port)
+			if err := ps.HttpServer.ListenAndServe(); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					ps.serverConfig.Logger.Error(wrapError(errServerInit, err).Error())
+				}
+			}
+		}
+	}()
 
 	// spawn another goroutine to respond to syscall to shut down servers and terminate the main thread
 	go func() {
@@ -255,9 +255,9 @@ func (ps *platformServer) StopServer() {
 
 // SetStaticRoute adds a route where static resources will be served
 func (ps *platformServer) SetStaticRoute(prefix, fullpath string, middlewareFn ...mux.MiddlewareFunc) {
-	ps.router.Handle(prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, prefix+"/", http.StatusMovedPermanently)
-	}))
+	//ps.router.Handle(prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	//	http.Redirect(w, r, prefix+"/", http.StatusMovedPermanently)
+	//}))
 
 	ndir := NoDirFileSystem{http.Dir(fullpath)}
 	endpointHandlerMapKey := prefix + "*"
@@ -301,7 +301,7 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
 	endpointHandlerKey := bridgeConfig.Uri + "-" + bridgeConfig.Method
 
 	if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-		ps.serverConfig.Logger.Warn("[ranch] Endpoint is already associated with a handler, "+
+		ps.serverConfig.Logger.Warn("[ranch] endpoint is already associated with a handler, "+
 			"Try another endpoint or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
 		return
 	}
@@ -326,9 +326,9 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
 	// NOTE: mux.Router does not have mutex or any locking mechanism so it could sometimes lead to concurrency write
 	// panics. the following is to ensure the modification to ps.router can happen only once per thread, this atomic
 	// counter also protects against concurrent writing to ps.endpointHandlerMap
-	for !atomic.CompareAndSwapInt32(ps.routerConcurrencyProtection, 0, 1) {
-		time.Sleep(1 * time.Nanosecond)
-	}
+	//for !atomic.CompareAndSwapInt32(ps.routerConcurrencyProtection, 0, 1) {
+	//	time.Sleep(1 * time.Nanosecond)
+	//}
 
 	// build endpoint handler
 	ps.endpointHandlerMap[endpointHandlerKey] = ps.buildEndpointHandler(
@@ -353,12 +353,12 @@ func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeC
 		Methods(permittedMethods...).
 		Name(fmt.Sprintf("%s-%s", bridgeConfig.Uri, bridgeConfig.Method)).
 		Handler(ps.endpointHandlerMap[endpointHandlerKey])
-	if !atomic.CompareAndSwapInt32(ps.routerConcurrencyProtection, 1, 0) {
-		panic("Concurrency write on router detected when running ")
-	}
+	//if !atomic.CompareAndSwapInt32(ps.routerConcurrencyProtection, 1, 0) {
+	//	panic("Concurrency write on router detected when running ")
+	//}
 
 	ps.serverConfig.Logger.Info(
-		"[ranch] Service channel is bridged to a REST endpoint",
+		"[ranch] service channel is bridged to a REST endpoint",
 		"channel", bridgeConfig.ServiceChannel, "url", bridgeConfig.Uri, "method", bridgeConfig.Method)
 }
 
@@ -371,7 +371,7 @@ func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.R
 	endpointHandlerKey := bridgeConfig.Uri + "-" + AllMethodsWildcard
 
 	if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-		ps.serverConfig.Logger.Warn("[ranch] Path prefix is already being handled. "+
+		ps.serverConfig.Logger.Warn("[ranch] path prefix is already being handled. "+
 			"Try another prefix or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
 		return
 	}
@@ -502,8 +502,8 @@ func (ps *platformServer) loadGlobalHttpHandler(h *mux.Router) {
 	defer ps.lock.Unlock()
 	ps.router = h
 	ps.HttpServer.Handler = handlers.RecoveryHandler()(
-		//handlers.CompressHandler(
-		handlers.ProxyHeaders(ps.router))
+		handlers.CompressHandler(
+			handlers.ProxyHeaders(ps.router)))
 	//handlers.CombinedLoggingHandler(
 	//	ps.serverConfig.LogConfig.GetAccessLogFilePointer(), ps.router)))
 }
