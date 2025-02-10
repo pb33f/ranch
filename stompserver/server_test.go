@@ -40,6 +40,14 @@ func (cl *MockRawConnectionListener) Close() error {
     return nil
 }
 
+func (cl *MockRawConnectionListener) GetConnectionOpenChannel() chan *Connection {
+    return nil
+}
+
+func (cl *MockRawConnectionListener) GetConnectionCloseChannel() chan *Connection {
+    return nil
+}
+
 func newTestStompServer(config StompConfig) (*stompServer, *MockRawConnectionListener) {
     listener := NewMockRawConnectionListener()
     return NewStompServer(listener, config).(*stompServer), listener
