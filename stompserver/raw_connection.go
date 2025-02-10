@@ -4,24 +4,34 @@
 package stompserver
 
 import (
-	"github.com/go-stomp/stomp/v3/frame"
-	"time"
+    "github.com/go-stomp/stomp/v3/frame"
+    "time"
 )
 
+type Connection struct {
+    Source string
+}
+
 type RawConnection interface {
-	// Reads a single frame object
-	ReadFrame() (*frame.Frame, error)
-	// Sends a single frame object
-	WriteFrame(frame *frame.Frame) error
-	// Set deadline for reading frames
-	SetReadDeadline(t time.Time)
-	// Close the connection
-	Close() error
+    // ReadFrame Reads a single frame object
+    ReadFrame() (*frame.Frame, error)
+    // WriteFrame Sends a single frame object
+    WriteFrame(frame *frame.Frame) error
+    // SetReadDeadline Set deadline for reading frames
+    SetReadDeadline(t time.Time)
+    // Close the connection
+    Close() error
 }
 
 type RawConnectionListener interface {
-	// Blocks until a new RawConnection is established.
-	Accept() (RawConnection, error)
-	// Stops the connection listener.
-	Close() error
+    // Accept Blocks until a new RawConnection is established.
+    Accept() (RawConnection, error)
+    // Close Stops the connection listener.
+    Close() error
+
+    // GetConnectionOpenChannel will return a channel that emits connection results when clients connect.
+    GetConnectionOpenChannel() chan *Connection
+
+    // GetConnectionCloseChannel will return a channel the emits connection result when clients disconnect.
+    GetConnectionCloseChannel() chan *Connection
 }

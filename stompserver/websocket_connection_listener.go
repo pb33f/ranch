@@ -17,12 +17,12 @@ import (
     "time"
 )
 
-type webSocketStompConnection struct {
-    wsCon *websocket.Conn
+type WebSocketStompConnection struct {
+    WSCon *websocket.Conn
 }
 
-func (c *webSocketStompConnection) ReadFrame() (*frame.Frame, error) {
-    _, r, err := c.wsCon.NextReader()
+func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
+    _, r, err := c.WSCon.NextReader()
     if err != nil {
         return nil, err
     }
@@ -31,8 +31,8 @@ func (c *webSocketStompConnection) ReadFrame() (*frame.Frame, error) {
     return f, e
 }
 
-func (c *webSocketStompConnection) WriteFrame(f *frame.Frame) error {
-    wr, err := c.wsCon.NextWriter(websocket.TextMessage)
+func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
+    wr, err := c.WSCon.NextWriter(websocket.TextMessage)
     if err != nil {
         return err
     }
@@ -45,32 +45,36 @@ func (c *webSocketStompConnection) WriteFrame(f *frame.Frame) error {
     return err
 }
 
-func (c *webSocketStompConnection) SetReadDeadline(t time.Time) {
-    c.wsCon.SetReadDeadline(t)
+func (c *WebSocketStompConnection) SetReadDeadline(t time.Time) {
+    c.WSCon.SetReadDeadline(t)
 }
 
-func (c *webSocketStompConnection) Close() error {
-    return c.wsCon.Close()
+func (c *WebSocketStompConnection) Close() error {
+    return c.WSCon.Close()
 }
 
 type webSocketConnectionListener struct {
     httpServer            *http.Server
     requestHandler        *http.ServeMux
     tcpConnectionListener net.Listener
-    connectionsChannel    chan rawConnResult
+    connectionsChannel    chan RawConnResult
+    closeChannel          chan *Connection
+    openChannel           chan *Connection
     allowedOrigins        []string
 }
 
-type rawConnResult struct {
-    conn RawConnection
-    err  error
+type RawConnResult struct {
+    Conn RawConnection
+    Err  error
 }
 
 func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handler *mux.Router,
-    endpoint string, allowedOrigins []string, logger *slog.Logger, debug bool) (RawConnectionListener, error) {
+    endpoint string, allowedOrigins []string, logger *slog.Logger, debug bool, customSocketFunc http.HandlerFunc) (RawConnectionListener, error) {
     l := &webSocketConnectionListener{
         httpServer:         httpServer,
-        connectionsChannel: make(chan rawConnResult),
+        connectionsChannel: make(chan RawConnResult),
+        closeChannel:       make(chan *Connection),
+        openChannel:        make(chan *Connection),
         allowedOrigins:     allowedOrigins,
     }
 
@@ -87,7 +91,7 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
                 logger.Info(fmt.Sprintf("[ranch] websocket connection from: %s", request.RemoteAddr))
             }
         }
-        if request.Header.Get("Connection") != "Upgrade" ||
+        if !strings.Contains(request.Header.Get("Connection"), "Upgrade") ||
             request.Header.Get("Upgrade") != "websocket" {
             writer.WriteHeader(http.StatusBadRequest)
             if debug {
@@ -101,15 +105,39 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
         upgrader.Subprotocols = websocket.Subprotocols(request)
         conn, err := upgrader.Upgrade(writer, request, nil)
         if err != nil {
-            l.connectionsChannel <- rawConnResult{err: err}
-
-        } else {
-            l.connectionsChannel <- rawConnResult{
-                conn: &webSocketStompConnection{
-                    wsCon: conn,
-                },
-            }
+            l.connectionsChannel <- RawConnResult{Err: err}
+            return
         }
+
+        wsConn := &WebSocketStompConnection{
+            WSCon: conn,
+        }
+
+        conn.SetCloseHandler(func(code int, text string) error {
+            if debug {
+                if logger != nil {
+                    logger.Info(fmt.Sprintf("[ranch] websocket connection from: %s has been closed", request.RemoteAddr))
+                }
+            }
+            l.closeChannel <- &Connection{
+                Source: request.RemoteAddr,
+            }
+            return nil
+        })
+
+        go func() {
+            l.connectionsChannel <- RawConnResult{
+                Conn: wsConn,
+            }
+            l.openChannel <- &Connection{
+                Source: request.RemoteAddr,
+            }
+        }()
+
+        if customSocketFunc != nil {
+            customSocketFunc.ServeHTTP(writer, request)
+        }
+
     })
 
     return l, nil
@@ -123,7 +151,7 @@ func NewWebSocketConnectionListener(addr string, endpoint string, allowedOrigins
             Addr:    addr,
             Handler: rh,
         },
-        connectionsChannel: make(chan rawConnResult),
+        connectionsChannel: make(chan RawConnResult),
         allowedOrigins:     allowedOrigins,
     }
 
@@ -154,12 +182,12 @@ func NewWebSocketConnectionListener(addr string, endpoint string, allowedOrigins
         upgrader.Subprotocols = websocket.Subprotocols(request)
         conn, err := upgrader.Upgrade(writer, request, nil)
         if err != nil {
-            l.connectionsChannel <- rawConnResult{err: err}
+            l.connectionsChannel <- RawConnResult{Err: err}
 
         } else {
-            l.connectionsChannel <- rawConnResult{
-                conn: &webSocketStompConnection{
-                    wsCon: conn,
+            l.connectionsChannel <- RawConnResult{
+                Conn: &WebSocketStompConnection{
+                    WSCon: conn,
                 },
             }
         }
@@ -173,6 +201,14 @@ func NewWebSocketConnectionListener(addr string, endpoint string, allowedOrigins
 
     go l.httpServer.Serve(l.tcpConnectionListener)
     return l, nil
+}
+
+func (l *webSocketConnectionListener) GetConnectionOpenChannel() chan *Connection {
+    return l.openChannel
+}
+
+func (l *webSocketConnectionListener) GetConnectionCloseChannel() chan *Connection {
+    return l.closeChannel
 }
 
 func (l *webSocketConnectionListener) checkOrigin(r *http.Request) bool {
@@ -203,7 +239,7 @@ func (l *webSocketConnectionListener) checkOrigin(r *http.Request) bool {
 
 func (l *webSocketConnectionListener) Accept() (RawConnection, error) {
     cr := <-l.connectionsChannel
-    return cr.conn, cr.err
+    return cr.Conn, cr.Err
 }
 
 func (l *webSocketConnectionListener) Close() error {
