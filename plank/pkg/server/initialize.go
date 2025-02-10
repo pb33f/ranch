@@ -155,7 +155,8 @@ func (ps *platformServer) configureFabric() {
             ps.HttpServer,
             ps.router,
             ps.serverConfig.FabricConfig.FabricEndpoint,
-            nil, ps.serverConfig.Logger, ps.serverConfig.Debug) // TODO: consider tightening access by allowing configuring allowedOrigins
+            nil, ps.serverConfig.Logger, ps.serverConfig.Debug,
+            ps.serverConfig.SocketCreationFunc) // TODO: consider tightening access by allowing configuring allowedOrigins
     }
 
     // if creation of listener fails, crash and burn
