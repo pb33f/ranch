@@ -13,12 +13,14 @@ import (
     "net/http"
     "net/url"
     "strings"
+    "sync"
 
     "time"
 )
 
 type WebSocketStompConnection struct {
-    WSCon *websocket.Conn
+    WSCon     *websocket.Conn
+    writeMutex sync.Mutex
 }
 
 func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
@@ -32,6 +34,9 @@ func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
 }
 
 func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
+    c.writeMutex.Lock()
+    defer c.writeMutex.Unlock()
+    
     wr, err := c.WSCon.NextWriter(websocket.TextMessage)
     if err != nil {
         return err
@@ -47,6 +52,10 @@ func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
 
 func (c *WebSocketStompConnection) SetReadDeadline(t time.Time) {
     c.WSCon.SetReadDeadline(t)
+}
+
+func (c *WebSocketStompConnection) GetRemoteAddr() string {
+    return c.WSCon.RemoteAddr().String()
 }
 
 func (c *WebSocketStompConnection) Close() error {
