@@ -99,6 +99,8 @@ func (a *AuthInfo) HasRole(role string) bool {
 type StompConn interface {
     // Return unique connection Id string
     GetId() string
+    // Return IP address of the connection
+    GetIPAddress() string
     SendFrameToSubscription(f *frame.Frame, sub *Subscription)
     Close()
     GetSubscriptions() map[string]*Subscription
@@ -126,6 +128,7 @@ type stompConn struct {
     readTimeoutMs    int64
     writeTimeout     time.Duration
     id               string
+    ipAddress        string
     events           chan *ConnEvent
     config           StompConfig
     subscriptions    map[string]*Subscription
@@ -142,6 +145,7 @@ func NewStompConn(rawConnection RawConnection, config StompConfig, events chan *
         outFrames:     make(chan *frame.Frame, 32),
         config:        config,
         id:            uuid.New().String(),
+        ipAddress:     rawConnection.GetRemoteAddr(),
         events:        events,
         subscriptions: make(map[string]*Subscription),
     }
@@ -180,6 +184,10 @@ func (conn *stompConn) Close() {
 
 func (conn *stompConn) GetId() string {
     return conn.id
+}
+
+func (conn *stompConn) GetIPAddress() string {
+    return conn.ipAddress
 }
 
 func (conn *stompConn) run() {

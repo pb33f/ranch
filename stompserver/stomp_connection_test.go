@@ -80,6 +80,10 @@ func (con *MockRawConnection) getCurrentReadDeadline() time.Time {
     return con.currentDeadline
 }
 
+func (con *MockRawConnection) GetRemoteAddr() string {
+    return "127.0.0.1:12345"
+}
+
 func (con *MockRawConnection) Close() error {
     con.connected = false
     return nil

@@ -29,6 +29,10 @@ func (c *tcpStompConnection) SetReadDeadline(t time.Time) {
     c.tcpCon.SetReadDeadline(t)
 }
 
+func (c *tcpStompConnection) GetRemoteAddr() string {
+    return c.tcpCon.RemoteAddr().String()
+}
+
 func (c *tcpStompConnection) Close() error {
     return c.tcpCon.Close()
 }
