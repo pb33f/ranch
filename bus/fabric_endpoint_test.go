@@ -73,6 +73,15 @@ func (s *MockStompServer) SetConnectionEventCallback(connEventType stompserver.S
 	cb(&stompserver.ConnEvent{ConnId: "id"})
 }
 
+func (s *MockStompServer) CloseConnectionsByIP(ip string, errorMessage string) {
+	// Mock implementation - no-op
+}
+
+
+func (s *MockStompServer) SetIPBlockChecker(checker stompserver.IPBlockCheckHandler) {
+	// Mock implementation - no-op
+}
+
 func newTestFabricEndpoint(bus EventBus, config EndpointConfig) (*fabricEndpoint, *MockStompServer) {
 
 	fe := newFabricEndpoint(bus, nil, config).(*fabricEndpoint)

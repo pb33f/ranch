@@ -4,10 +4,13 @@
 package stompserver
 
 import (
-    "github.com/go-stomp/stomp/v3/frame"
+    "errors"
     "log"
+    "net"
     "strconv"
     "sync"
+
+    "github.com/go-stomp/stomp/v3/frame"
 )
 
 type SubscribeHandlerFunction func(conId string, subId string, destination string, frame *frame.Frame)
@@ -15,6 +18,8 @@ type SubscribeHandlerFunction func(conId string, subId string, destination strin
 type UnsubscribeHandlerFunction func(conId string, subId string, destination string)
 
 type ApplicationRequestHandlerFunction func(destination string, message []byte, connectionId string)
+
+type IPBlockCheckHandler func(ip string) (blocked bool, errorMessage string)
 
 type StompServer interface {
     // starts the server
@@ -25,6 +30,10 @@ type StompServer interface {
     SendMessage(destination string, messageBody []byte)
     // sends a message to a single connection client
     SendMessageToClient(connectionId string, destination string, messageBody []byte)
+    // closes all connections from a specific IP address with a custom error message
+    CloseConnectionsByIP(ip string, errorMessage string)
+    // sets an IP blocking checker function that gets called before allowing connections
+    SetIPBlockChecker(checker IPBlockCheckHandler)
     // registers a callback for stomp subscribe events
     OnSubscribeEvent(callback SubscribeHandlerFunction)
     // registers a callback for stomp unsubscribe events
@@ -62,13 +71,16 @@ const (
     closeServer apiEventType = iota
     sendMessage
     sendPrivateMessage
+    closeConnectionByIP
 )
 
 type apiEvent struct {
-    eventType   apiEventType
-    connId      string
-    frame       *frame.Frame
-    destination string
+    eventType    apiEventType
+    connId       string
+    targetIP     string
+    frame        *frame.Frame
+    destination  string
+    errorMessage string
 }
 
 type connSubscriptions struct {
@@ -96,6 +108,7 @@ type stompServer struct {
     subscribeCallbacks          []SubscribeHandlerFunction
     unsubscribeCallbacks        []UnsubscribeHandlerFunction
     applicationRequestCallbacks []ApplicationRequestHandlerFunction
+    ipBlockChecker              IPBlockCheckHandler
 }
 
 func NewStompServer(listener RawConnectionListener, config StompConfig) StompServer {
@@ -171,6 +184,29 @@ func (s *stompServer) SendMessageToClient(connectionId string, destination strin
     }
 }
 
+// extractIPFromAddress extracts IP address from "IP:port" or "[IPv6]:port" format
+func extractIPFromAddress(address string) string {
+    host, _, err := net.SplitHostPort(address)
+    if err != nil {
+        // If SplitHostPort fails, return original address (might already be clean IP)
+        return address
+    }
+    return host
+}
+
+func (s *stompServer) CloseConnectionsByIP(ip string, errorMessage string) {
+    s.apiEvents <- &apiEvent{
+        eventType:    closeConnectionByIP,
+        targetIP:     ip,
+        errorMessage: errorMessage,
+    }
+}
+
+
+func (s *stompServer) SetIPBlockChecker(checker IPBlockCheckHandler) {
+    s.ipBlockChecker = checker
+}
+
 func (s *stompServer) SetConnectionEventCallback(connEventType StompSessionEventType, cb func(connEvent *ConnEvent)) {
     s.callbackLock.Lock()
     defer s.callbackLock.Unlock()
@@ -210,6 +246,21 @@ func (s *stompServer) waitForConnections() {
             continue
         }
 
+        // Check if IP is blocked before allowing STOMP connection
+        if s.ipBlockChecker != nil {
+            ip := rawConn.GetRemoteAddr()
+            if blocked, errorMessage := s.ipBlockChecker(ip); blocked {
+                // Send ERROR frame and close connection immediately
+                errorFrame := frame.New(frame.ERROR, frame.Message, errorMessage)
+                if err := rawConn.WriteFrame(errorFrame); err != nil {
+                    // Log write error but still close connection
+                    log.Printf("Failed to send ERROR frame to blocked IP %s: %v", ip, err)
+                }
+                rawConn.Close()
+                continue // Skip creating STOMP connection
+            }
+        }
+
         c := NewStompConn(rawConn, s.config, s.connectionEvents)
 
         s.connectionEvents <- &ConnEvent{
@@ -225,7 +276,8 @@ func (s *stompServer) run() {
         select {
 
         case apiEvent, _ := <-s.apiEvents:
-            if apiEvent.eventType == closeServer {
+            switch apiEvent.eventType {
+            case closeServer:
                 s.connectionListener.Close()
                 // close all open connections
                 for _, c := range s.connectionsMap {
@@ -233,10 +285,24 @@ func (s *stompServer) run() {
                 }
                 s.connectionsMap = make(map[string]StompConn)
                 return
-            } else if apiEvent.eventType == sendMessage {
+
+            case sendMessage:
                 s.sendFrame(apiEvent.destination, apiEvent.frame)
-            } else if apiEvent.eventType == sendPrivateMessage {
+
+            case sendPrivateMessage:
                 s.sendFrameToClient(apiEvent.connId, apiEvent.destination, apiEvent.frame)
+
+            case closeConnectionByIP:
+                for _, conn := range s.connectionsMap {
+                    connIP := extractIPFromAddress(conn.GetIPAddress())
+                    if connIP == apiEvent.targetIP {
+                        // Send error frame before closing connection
+                        conn.SendError(errors.New(apiEvent.errorMessage))
+                        conn.Close()
+                    }
+                }
+                // Connection termination completed
+
             }
 
         case e, _ := <-s.connectionEvents:
