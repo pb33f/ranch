@@ -66,6 +66,7 @@ type PlatformServer interface {
     GetRestBridgeSubRoute(uri, method string) (*mux.Route, error)               // get *mux.Route that maps to the provided uri and method
     GetMiddlewareManager() middleware.MiddlewareManager                         // get middleware manager
     GetFabricConnectionListener() stompserver.RawConnectionListener
+    GetStompServer() stompserver.StompServer                                    // get STOMP server instance for connection management
 }
 
 // platformServer is the main struct that holds all components together including servers, various managers etc.
