@@ -19,6 +19,8 @@ type RawConnection interface {
     WriteFrame(frame *frame.Frame) error
     // SetReadDeadline Set deadline for reading frames
     SetReadDeadline(t time.Time)
+    // GetRemoteAddr Returns the remote address of the connection
+    GetRemoteAddr() string
     // Close the connection
     Close() error
 }
