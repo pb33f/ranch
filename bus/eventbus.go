@@ -40,6 +40,7 @@ type EventBus interface {
 	ConnectBroker(config *bridge.BrokerConnectorConfig) (conn bridge.Connection, err error)
 	StartFabricEndpoint(connectionListener stompserver.RawConnectionListener, config EndpointConfig) error
 	StopFabricEndpoint() error
+	GetStompServer() stompserver.StompServer
 	GetStoreManager() StoreManager
 	CreateSyncTransaction() BusTransaction
 	CreateAsyncTransaction() BusTransaction
@@ -167,6 +168,13 @@ func (bus *transportEventBus) init() {
 
 func (bus *transportEventBus) GetStoreManager() StoreManager {
 	return bus.storeManager
+}
+
+func (bus *transportEventBus) GetStompServer() stompserver.StompServer {
+	if bus.fabEndpoint != nil {
+		return bus.fabEndpoint.GetStompServer()
+	}
+	return nil
 }
 
 // GetChannelManager Get a pointer to the ChannelManager for managing Channels.
