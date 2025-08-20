@@ -120,6 +120,14 @@ func (ps *platformServer) GetFabricConnectionListener() stompserver.RawConnectio
     return ps.fabricConn
 }
 
+func (ps *platformServer) GetStompServer() stompserver.StompServer {
+    if ps.eventbus != nil {
+        // Access STOMP server through event bus fabric endpoint
+        return ps.eventbus.GetStompServer()
+    }
+    return nil
+}
+
 // StartServer starts listening on the host and port as specified by ServerConfig
 func (ps *platformServer) StartServer(syschan chan os.Signal) {
     connClosed := make(chan struct{})

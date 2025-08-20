@@ -54,6 +54,7 @@ func (ec *EndpointConfig) validate() error {
 type FabricEndpoint interface {
     Start()
     Stop()
+    GetStompServer() stompserver.StompServer
 }
 
 type channelMapping struct {
@@ -133,6 +134,10 @@ func (fe *fabricEndpoint) Start() {
 
 func (fe *fabricEndpoint) Stop() {
     fe.server.Stop()
+}
+
+func (fe *fabricEndpoint) GetStompServer() stompserver.StompServer {
+    return fe.server
 }
 
 func (fe *fabricEndpoint) initHandlers() {
