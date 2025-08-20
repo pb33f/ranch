@@ -56,11 +56,11 @@ func (ps *platformServer) initialize() {
             runtime.SetBlockProfileRate(1) // capture traces of all possible contended mutex holders
             profilerRouter := mux.NewRouter()
             profilerRouter.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
-            if err := http.ListenAndServe(":6060", profilerRouter); err != nil {
+            if err := http.ListenAndServe(":6062", profilerRouter); err != nil {
                 panic(err)
             }
         }()
-        ps.serverConfig.Logger.Debug("Debug logging and profiling enabled. Available types of profiles at http://localhost:6060/debug/pprof")
+        ps.serverConfig.Logger.Debug("Debug logging and profiling enabled. Available types of profiles at http://localhost:6062/debug/pprof")
     }
 
     // set a new route handler
