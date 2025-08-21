@@ -18,8 +18,16 @@ import (
     "time"
 )
 
+// IPBlockingChecker is an interface for checking if an IP should be blocked
+type IPBlockingChecker interface {
+    IsIPBlocked(ip string) (bool, string) // Returns blocked status and reason
+    TrackConnection(ip string, sessionID string)
+    TrackDisconnection(ip string, sessionID string)
+    ExtractRealIP(remoteAddr string, headers map[string][]string) string
+}
+
 type WebSocketStompConnection struct {
-    WSCon     *websocket.Conn
+    WSCon      *websocket.Conn
     writeMutex sync.Mutex
 }
 
@@ -36,7 +44,7 @@ func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
 func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
     c.writeMutex.Lock()
     defer c.writeMutex.Unlock()
-    
+
     wr, err := c.WSCon.NextWriter(websocket.TextMessage)
     if err != nil {
         return err
@@ -70,6 +78,7 @@ type webSocketConnectionListener struct {
     closeChannel          chan *Connection
     openChannel           chan *Connection
     allowedOrigins        []string
+    ipBlockingChecker     IPBlockingChecker // Optional IP blocking checker
 }
 
 type RawConnResult struct {
@@ -95,17 +104,38 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
     upgrader.CheckOrigin = l.checkOrigin
 
     handler.HandleFunc(endpoint, func(writer http.ResponseWriter, request *http.Request) {
+        // Check for IP blocking if checker is configured
+        if l.ipBlockingChecker != nil {
+            realIP := l.ipBlockingChecker.ExtractRealIP(request.RemoteAddr, request.Header)
+            if blocked, reason := l.ipBlockingChecker.IsIPBlocked(realIP); blocked {
+                if logger != nil {
+                    logger.Warn(fmt.Sprintf(LogBlockedIPAttempted, realIP, reason))
+                }
+                writer.WriteHeader(http.StatusTooManyRequests)
+                writer.Write([]byte(StatusMessageTooManyRequests))
+                return
+            }
+            // Track the connection
+            sessionID := request.Header.Get(HeaderXSessionID)
+            if sessionID == "" {
+                if cookie, err := request.Cookie(CookieNameSession); err == nil {
+                    sessionID = cookie.Value
+                }
+            }
+            l.ipBlockingChecker.TrackConnection(realIP, sessionID)
+        }
+
         if debug {
             if logger != nil {
-                logger.Info(fmt.Sprintf("[ranch] websocket connection from: %s", request.RemoteAddr))
+                logger.Info(fmt.Sprintf(LogWebSocketConnection, request.RemoteAddr))
             }
         }
-        if !strings.Contains(request.Header.Get("Connection"), "Upgrade") ||
-            request.Header.Get("Upgrade") != "websocket" {
+        if !strings.Contains(request.Header.Get(HeaderConnection), HeaderUpgrade) ||
+            request.Header.Get(HeaderUpgrade) != HeaderUpgradeValue {
             writer.WriteHeader(http.StatusBadRequest)
             if debug {
                 if logger != nil {
-                    logger.Warn(fmt.Sprintf("[ranch] failed websocket connection from: %s", request.RemoteAddr))
+                    logger.Warn(fmt.Sprintf(LogWebSocketFailed, request.RemoteAddr))
                 }
             }
             return
@@ -125,8 +155,19 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
         conn.SetCloseHandler(func(code int, text string) error {
             if debug {
                 if logger != nil {
-                    logger.Info(fmt.Sprintf("[ranch] websocket connection from: %s has been closed", request.RemoteAddr))
+                    logger.Info(fmt.Sprintf(LogWebSocketClosed, request.RemoteAddr))
                 }
+            }
+            // Track disconnection if IP blocker is configured
+            if l.ipBlockingChecker != nil {
+                realIP := l.ipBlockingChecker.ExtractRealIP(request.RemoteAddr, request.Header)
+                sessionID := request.Header.Get(HeaderXSessionID)
+                if sessionID == "" {
+                    if cookie, err := request.Cookie(CookieNameSession); err == nil {
+                        sessionID = cookie.Value
+                    }
+                }
+                l.ipBlockingChecker.TrackDisconnection(realIP, sessionID)
             }
             l.closeChannel <- &Connection{
                 Source: request.RemoteAddr,
@@ -253,4 +294,9 @@ func (l *webSocketConnectionListener) Accept() (RawConnection, error) {
 
 func (l *webSocketConnectionListener) Close() error {
     return l.httpServer.Close()
+}
+
+// SetIPBlockingChecker sets the IP blocking checker for this listener
+func (l *webSocketConnectionListener) SetIPBlockingChecker(checker IPBlockingChecker) {
+    l.ipBlockingChecker = checker
 }
