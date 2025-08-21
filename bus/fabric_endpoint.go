@@ -7,7 +7,7 @@ import (
     "encoding/json"
     "fmt"
     "github.com/go-stomp/stomp/v3/frame"
-    "github.com/pb33f/ranch/log"
+     "log/slog"
     "github.com/pb33f/ranch/model"
     "github.com/pb33f/ranch/stompserver"
     "strings"
@@ -74,6 +74,7 @@ type fabricEndpoint struct {
     config       EndpointConfig
     chanLock     sync.RWMutex
     chanMappings map[string]*channelMapping
+    logger       *slog.Logger
 }
 
 func addPrefixIfNotEmpty(s string, prefix string) string {
@@ -104,6 +105,7 @@ func newFabricEndpoint(bus EventBus,
         config:       config,
         bus:          bus,
         chanMappings: make(map[string]*channelMapping),
+        logger:       slog.Default(),
     }
 
     fep.initHandlers()
@@ -171,7 +173,7 @@ func (fe *fabricEndpoint) addSubscription(
             fe.bus.GetChannelManager().CreateChannel(channelName)
             messageHandler, err = fe.bus.ListenStream(channelName)
             if messageHandler == nil || err != nil {
-                log.Warn("Unable to auto-create channel for destination: %s", destination)
+                fe.logger.Warn("Unable to auto-create channel for destination: %s", destination)
                 return
             }
             autoCreated = true
@@ -182,13 +184,31 @@ func (fe *fabricEndpoint) addSubscription(
                 if err == nil {
                     resp, ok := convertPayloadToResponseObj(message)
                     if ok && resp != nil && resp.BrokerDestination != nil {
+                         fe.logger.Debug("Routing message to specific broker. ConnectionId: %s, Destination: %s, Channel: %s",
+                            resp.BrokerDestination.ConnectionId, resp.BrokerDestination.Destination, channelName)
                         fe.server.SendMessageToClient(
                             resp.BrokerDestination.ConnectionId,
                             resp.BrokerDestination.Destination,
                             data)
                     } else {
+                        // Check if the payload is a nested Response that indicates double-wrapping
+                        if respPayload, isResp := message.Payload.(*model.Response); isResp && respPayload.BrokerDestination != nil {
+                            // This is a double-wrapped Response - the developer passed a Response to SendResponse
+                             fe.logger.Warn("Double-wrapped Response detected. When using SendResponse with BrokerDestination, "+
+                                "pass your data directly as payload, not wrapped in a Response object. "+
+                                "Channel: %s, Intended destination: %s, ConnectionId: %s, Actual payload type: %T",
+                                channelName, respPayload.BrokerDestination.Destination, 
+                                respPayload.BrokerDestination.ConnectionId, respPayload.Payload)
+                        } else if message.Payload != nil && !ok {
+                            // Log helpful message when payload can't be converted to Response
+                             fe.logger.Debug("Message payload is type %T (not model.Response), broadcasting to topic. "+
+                                "To route to specific broker connection, SendResponse must receive a model.Response object "+
+                                "with BrokerDestination set. Channel: %s", message.Payload, channelName)
+                        }
                         fe.server.SendMessage(fe.config.TopicPrefix+channelName, data)
                     }
+                } else {
+                     fe.logger.Error("Failed to marshal message payload for channel %s: %v", channelName, err)
                 }
             },
             func(e error) {
@@ -222,6 +242,12 @@ func convertPayloadToResponseObj(message *model.Message) (*model.Response, bool)
         return respPtr, true
     }
 
+    // Log the actual type for debugging when conversion fails
+    if message.Payload != nil {
+         slog.Default().Debug("Failed to convert message payload to Response. Actual type: %T, Channel: %s",
+            message.Payload, message.Channel)
+    }
+
     return nil, false
 }
 
@@ -237,6 +263,22 @@ func marshalMessagePayload(message *model.Message) ([]byte, error) {
     }
     // encode the message payload as JSON
     return json.Marshal(message.Payload)
+}
+
+// marshalPayload marshals a payload, respecting the marshal flag
+func marshalPayload(payload interface{}, shouldMarshal bool) ([]byte, error) {
+    // If marshal flag is false, try to return as string or byte array
+    if !shouldMarshal {
+        if str, ok := payload.(string); ok {
+            return []byte(str), nil
+        }
+        if bytes, ok := payload.([]byte); ok {
+            return bytes, nil
+        }
+    }
+    
+    // Otherwise marshal to JSON
+    return json.Marshal(payload)
 }
 
 func (fe *fabricEndpoint) removeSubscription(conId string, subId string, destination string) {
@@ -284,7 +326,7 @@ func (fe *fabricEndpoint) bridgeMessage(destination string, message []byte, conn
     var req model.Request
     err := json.Unmarshal(message, &req)
     if err != nil {
-        log.Warn("Failed to deserialize request for channel %s", channelName)
+         fe.logger.Warn("Failed to deserialize request for channel %s", channelName)
         return
     }
 

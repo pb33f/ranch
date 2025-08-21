@@ -408,12 +408,31 @@ func (s *stompServer) sendFrame(dest string, f *frame.Frame) {
 
 func (s *stompServer) sendFrameToClient(conId string, dest string, f *frame.Frame) {
     subsMap, ok := s.subscriptionsMap[dest]
-    if ok {
-        connSubscriptions, ok := subsMap[conId]
-        if ok {
-            for _, sub := range connSubscriptions.subscriptions {
-                connSubscriptions.conn.SendFrameToSubscription(f.Clone(), sub)
-            }
-        }
+    if !ok {
+        // No subscriptions exist for this destination at all
+        log.Printf("[WARN] No subscriptions found for destination: %s", dest)
+        return
     }
+    
+    connSubscriptions, ok := subsMap[conId]
+    if !ok {
+        // This connection doesn't have a subscription to this destination
+        log.Printf("[WARN] Connection %s has no subscription to destination: %s. Available connections for this destination: %v", 
+            conId, dest, getConnectionIds(subsMap))
+        return
+    }
+    
+    // Successfully sending to subscriptions
+    for _, sub := range connSubscriptions.subscriptions {
+        connSubscriptions.conn.SendFrameToSubscription(f.Clone(), sub)
+    }
+}
+
+// Helper function to get list of connection IDs for debugging
+func getConnectionIds(subsMap map[string]*connSubscriptions) []string {
+    ids := make([]string, 0, len(subsMap))
+    for id := range subsMap {
+        ids = append(ids, id)
+    }
+    return ids
 }
