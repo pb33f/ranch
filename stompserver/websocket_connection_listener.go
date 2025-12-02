@@ -111,18 +111,20 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
                 if logger != nil {
                     logger.Warn(fmt.Sprintf(LogBlockedIPAttempted, realIP, reason))
                 }
-                writer.WriteHeader(http.StatusTooManyRequests)
-                writer.Write([]byte(StatusMessageTooManyRequests))
-                return
-            }
-            // Track the connection
-            sessionID := request.Header.Get(HeaderXSessionID)
-            if sessionID == "" {
-                if cookie, err := request.Cookie(CookieNameSession); err == nil {
-                    sessionID = cookie.Value
+                // IMPORTANT: We now allow blocked IPs to connect so they can receive
+                // a STOMP ERROR frame. The STOMP server will handle sending the ERROR
+                // frame and closing the connection immediately after.
+                // This is less efficient but allows the UI to receive the error message.
+            } else {
+                // Track the connection only if not blocked
+                sessionID := request.Header.Get(HeaderXSessionID)
+                if sessionID == "" {
+                    if cookie, err := request.Cookie(CookieNameSession); err == nil {
+                        sessionID = cookie.Value
+                    }
                 }
+                l.ipBlockingChecker.TrackConnection(realIP, sessionID)
             }
-            l.ipBlockingChecker.TrackConnection(realIP, sessionID)
         }
 
         if debug {

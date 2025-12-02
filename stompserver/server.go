@@ -21,6 +21,32 @@ type ApplicationRequestHandlerFunction func(destination string, message []byte, 
 
 type IPBlockCheckHandler func(ip string) (blocked bool, errorMessage string)
 
+// funcIPBlockingChecker adapts IPBlockCheckHandler to IPBlockingChecker interface
+type funcIPBlockingChecker struct {
+    checkFunc IPBlockCheckHandler
+}
+
+func (f *funcIPBlockingChecker) IsIPBlocked(ip string) (bool, string) {
+    if f.checkFunc != nil {
+        return f.checkFunc(ip)
+    }
+    return false, ""
+}
+
+func (f *funcIPBlockingChecker) TrackConnection(ip string, sessionID string) {
+    // Not implemented - tracking handled elsewhere
+}
+
+func (f *funcIPBlockingChecker) TrackDisconnection(ip string, sessionID string) {
+    // Not implemented - tracking handled elsewhere
+}
+
+func (f *funcIPBlockingChecker) ExtractRealIP(remoteAddr string, headers map[string][]string) string {
+    // Basic extraction - just return remote address
+    // The actual extraction is done by the caller
+    return remoteAddr
+}
+
 type StompServer interface {
     // starts the server
     Start()
@@ -205,6 +231,16 @@ func (s *stompServer) CloseConnectionsByIP(ip string, errorMessage string) {
 
 func (s *stompServer) SetIPBlockChecker(checker IPBlockCheckHandler) {
     s.ipBlockChecker = checker
+    
+    // Also set on the underlying WebSocket listener if it exists
+    if wsListener, ok := s.connectionListener.(*webSocketConnectionListener); ok {
+        // Create an adapter to convert the function to the interface the listener expects
+        if checker != nil {
+            wsListener.ipBlockingChecker = &funcIPBlockingChecker{checkFunc: checker}
+        } else {
+            wsListener.ipBlockingChecker = nil
+        }
+    }
 }
 
 func (s *stompServer) SetConnectionEventCallback(connEventType StompSessionEventType, cb func(connEvent *ConnEvent)) {
