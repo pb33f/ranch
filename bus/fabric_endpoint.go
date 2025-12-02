@@ -173,7 +173,7 @@ func (fe *fabricEndpoint) addSubscription(
             fe.bus.GetChannelManager().CreateChannel(channelName)
             messageHandler, err = fe.bus.ListenStream(channelName)
             if messageHandler == nil || err != nil {
-                fe.logger.Warn("Unable to auto-create channel for destination: %s", destination)
+                fe.logger.Warn("unable to auto-create channel for destination", "destination", destination)
                 return
             }
             autoCreated = true
@@ -184,8 +184,10 @@ func (fe *fabricEndpoint) addSubscription(
                 if err == nil {
                     resp, ok := convertPayloadToResponseObj(message)
                     if ok && resp != nil && resp.BrokerDestination != nil {
-                         fe.logger.Debug("Routing message to specific broker. ConnectionId: %s, Destination: %s, Channel: %s",
-                            resp.BrokerDestination.ConnectionId, resp.BrokerDestination.Destination, channelName)
+                         fe.logger.Debug("routing message to specific broker",
+                            "connectionId", resp.BrokerDestination.ConnectionId,
+                            "destination", resp.BrokerDestination.Destination,
+                            "channel", channelName)
                         fe.server.SendMessageToClient(
                             resp.BrokerDestination.ConnectionId,
                             resp.BrokerDestination.Destination,
@@ -326,7 +328,7 @@ func (fe *fabricEndpoint) bridgeMessage(destination string, message []byte, conn
     var req model.Request
     err := json.Unmarshal(message, &req)
     if err != nil {
-         fe.logger.Warn("Failed to deserialize request for channel %s", channelName)
+         fe.logger.Warn("failed to deserialize request for channel", "channel", channelName)
         return
     }
 
