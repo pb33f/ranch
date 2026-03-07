@@ -16,10 +16,12 @@ import (
 // are served from /app/static, BaseUri can be set to /app and StaticAssets to "/app/assets". see config.json
 // for details.
 type SpaConfig struct {
-	RootFolder        string            `json:"root_folder"`         // location where Plank will serve SPA
-	BaseUri           string            `json:"base_uri"`            // base URI for the SPA
-	StaticAssets      []string          `json:"static_assets"`       // locations for static assets used by the SPA
-	CacheControlRules map[string]string `json:"cache_control_rules"` // map holding glob pattern - cache-control header value
+	RootFolder        string                   `json:"root_folder"`         // location where Plank will serve SPA
+	BaseUri           string                   `json:"base_uri"`            // base URI for the SPA
+	StaticAssets      []string                 `json:"static_assets"`       // locations for static assets used by the SPA
+	ExcludedPrefixes  []string                 `json:"excluded_prefixes"`   // paths that should never be handled by the SPA
+	CacheControlRules map[string]string        `json:"cache_control_rules"` // map holding glob pattern - cache-control header value
+	FallbackPredicate func(*http.Request) bool `json:"-"`
 
 	cacheControlRulePairs []middleware.CacheControlRulePair
 }
