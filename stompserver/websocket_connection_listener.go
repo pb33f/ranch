@@ -20,7 +20,7 @@ import (
 
 // IPBlockingChecker is an interface for checking if an IP should be blocked
 type IPBlockingChecker interface {
-    IsIPBlocked(ip string) (bool, string) // Returns blocked status and reason
+    IsIPBlocked(ip string) (bool, string) // returns blocked status and reason
     TrackConnection(ip string, sessionID string)
     TrackDisconnection(ip string, sessionID string)
     ExtractRealIP(remoteAddr string, headers map[string][]string) string
@@ -78,7 +78,8 @@ type webSocketConnectionListener struct {
     closeChannel          chan *Connection
     openChannel           chan *Connection
     allowedOrigins        []string
-    ipBlockingChecker     IPBlockingChecker // Optional IP blocking checker
+    ipBlockingChecker     IPBlockingChecker
+    ipBlockingCheckerMu   sync.RWMutex
 }
 
 type RawConnResult struct {
@@ -104,27 +105,19 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
     upgrader.CheckOrigin = l.checkOrigin
 
     handler.HandleFunc(endpoint, func(writer http.ResponseWriter, request *http.Request) {
-        // Check for IP blocking if checker is configured
-        if l.ipBlockingChecker != nil {
-            realIP := l.ipBlockingChecker.ExtractRealIP(request.RemoteAddr, request.Header)
-            if blocked, reason := l.ipBlockingChecker.IsIPBlocked(realIP); blocked {
+        // check IP blocking before allowing any connection
+        checker := l.getIPBlockingChecker()
+        if checker != nil {
+            realIP := checker.ExtractRealIP(request.RemoteAddr, request.Header)
+            if blocked, reason := checker.IsIPBlocked(realIP); blocked {
                 if logger != nil {
                     logger.Warn(fmt.Sprintf(LogBlockedIPAttempted, realIP, reason))
                 }
-                // IMPORTANT: We now allow blocked IPs to connect so they can receive
-                // a STOMP ERROR frame. The STOMP server will handle sending the ERROR
-                // frame and closing the connection immediately after.
-                // This is less efficient but allows the UI to receive the error message.
-            } else {
-                // Track the connection only if not blocked
-                sessionID := request.Header.Get(HeaderXSessionID)
-                if sessionID == "" {
-                    if cookie, err := request.Cookie(CookieNameSession); err == nil {
-                        sessionID = cookie.Value
-                    }
-                }
-                l.ipBlockingChecker.TrackConnection(realIP, sessionID)
+                writer.WriteHeader(http.StatusForbidden)
+                return
             }
+            // track every connection attempt (regardless of whether upgrade succeeds)
+            checker.TrackConnection(realIP, extractSessionID(request))
         }
 
         if debug {
@@ -160,16 +153,10 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
                     logger.Info(fmt.Sprintf(LogWebSocketClosed, request.RemoteAddr))
                 }
             }
-            // Track disconnection if IP blocker is configured
-            if l.ipBlockingChecker != nil {
-                realIP := l.ipBlockingChecker.ExtractRealIP(request.RemoteAddr, request.Header)
-                sessionID := request.Header.Get(HeaderXSessionID)
-                if sessionID == "" {
-                    if cookie, err := request.Cookie(CookieNameSession); err == nil {
-                        sessionID = cookie.Value
-                    }
-                }
-                l.ipBlockingChecker.TrackDisconnection(realIP, sessionID)
+            // track disconnection if IP blocker is configured
+            if closeChecker := l.getIPBlockingChecker(); closeChecker != nil {
+                realIP := closeChecker.ExtractRealIP(request.RemoteAddr, request.Header)
+                closeChecker.TrackDisconnection(realIP, extractSessionID(request))
             }
             l.closeChannel <- &Connection{
                 Source: request.RemoteAddr,
@@ -298,7 +285,26 @@ func (l *webSocketConnectionListener) Close() error {
     return l.httpServer.Close()
 }
 
+// extractSessionID extracts a session ID from the request header or cookie.
+func extractSessionID(r *http.Request) string {
+    if id := r.Header.Get(HeaderXSessionID); id != "" {
+        return id
+    }
+    if cookie, err := r.Cookie(CookieNameSession); err == nil {
+        return cookie.Value
+    }
+    return ""
+}
+
+func (l *webSocketConnectionListener) getIPBlockingChecker() IPBlockingChecker {
+    l.ipBlockingCheckerMu.RLock()
+    defer l.ipBlockingCheckerMu.RUnlock()
+    return l.ipBlockingChecker
+}
+
 // SetIPBlockingChecker sets the IP blocking checker for this listener
 func (l *webSocketConnectionListener) SetIPBlockingChecker(checker IPBlockingChecker) {
+    l.ipBlockingCheckerMu.Lock()
+    defer l.ipBlockingCheckerMu.Unlock()
     l.ipBlockingChecker = checker
 }

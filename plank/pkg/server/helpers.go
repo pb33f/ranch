@@ -97,7 +97,7 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 		RestBridgeTimeout: time.Duration(restBridgeTimeout) * time.Minute,
 	}
 
-	if len(certKey) > 0 && len(certKey) > 0 {
+		if len(cert) > 0 && len(certKey) > 0 {
 		var err error
 		certKey, err = filepath.Abs(certKey)
 		if err != nil {

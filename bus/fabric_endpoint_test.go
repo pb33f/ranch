@@ -78,8 +78,8 @@ func (s *MockStompServer) CloseConnectionsByIP(ip string, errorMessage string) {
 }
 
 
-func (s *MockStompServer) SetIPBlockChecker(checker stompserver.IPBlockCheckHandler) {
-	// Mock implementation - no-op
+func (s *MockStompServer) SetIPBlockingChecker(checker stompserver.IPBlockingChecker) {
+	// mock implementation - no-op
 }
 
 func newTestFabricEndpoint(bus EventBus, config EndpointConfig) (*fabricEndpoint, *MockStompServer) {
