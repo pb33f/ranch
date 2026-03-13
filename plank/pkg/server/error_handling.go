@@ -28,29 +28,41 @@ func (ps *platformServer) configureRouterErrorHandlers(router *mux.Router) {
 }
 
 func (ps *platformServer) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	if handler := ps.getRouteSpecificNotFoundHandler(r.URL.Path); handler != nil {
+		handler.ServeHTTP(w, r)
+		return
+	}
 	if ps.tryServeSPA(w, r) {
 		return
 	}
 
-	ps.getNotFoundHandler(r.URL.Path).ServeHTTP(w, r)
+	ps.getDefaultNotFoundHandler().ServeHTTP(w, r)
 }
 
 func (ps *platformServer) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	ps.getMethodNotAllowedHandler(r.URL.Path).ServeHTTP(w, r)
 }
 
-func (ps *platformServer) getNotFoundHandler(requestPath string) http.Handler {
-	if policy := ps.getRouteErrorPolicy(requestPath); policy != nil && policy.NotFoundHandler != nil {
-		return policy.NotFoundHandler
-	}
+func (ps *platformServer) getDefaultNotFoundHandler() http.Handler {
 	if ps.serverConfig.DefaultNotFoundHandler != nil {
 		return ps.serverConfig.DefaultNotFoundHandler
 	}
 	return http.NotFoundHandler()
 }
 
+func (ps *platformServer) getRouteSpecificNotFoundHandler(requestPath string) http.Handler {
+	if policy := ps.getRouteErrorPolicy(requestPath, func(policy *RouteErrorPolicy) http.Handler {
+		return policy.NotFoundHandler
+	}); policy != nil {
+		return policy.NotFoundHandler
+	}
+	return nil
+}
+
 func (ps *platformServer) getMethodNotAllowedHandler(requestPath string) http.Handler {
-	if policy := ps.getRouteErrorPolicy(requestPath); policy != nil && policy.MethodNotAllowedHandler != nil {
+	if policy := ps.getRouteErrorPolicy(requestPath, func(policy *RouteErrorPolicy) http.Handler {
+		return policy.MethodNotAllowedHandler
+	}); policy != nil {
 		return policy.MethodNotAllowedHandler
 	}
 	if ps.serverConfig.DefaultMethodNotAllowedHandler != nil {
@@ -61,12 +73,12 @@ func (ps *platformServer) getMethodNotAllowedHandler(requestPath string) http.Ha
 	})
 }
 
-func (ps *platformServer) getRouteErrorPolicy(requestPath string) *RouteErrorPolicy {
+func (ps *platformServer) getRouteErrorPolicy(requestPath string, handlerSelector func(*RouteErrorPolicy) http.Handler) *RouteErrorPolicy {
 	var matched *RouteErrorPolicy
 	longestPrefix := -1
 
 	for _, policy := range ps.serverConfig.RouteErrorPolicies {
-		if policy == nil || !pathMatchesPrefix(requestPath, policy.PathPrefix) {
+		if policy == nil || handlerSelector(policy) == nil || !pathMatchesPrefix(requestPath, policy.PathPrefix) {
 			continue
 		}
 		if len(policy.PathPrefix) > longestPrefix {

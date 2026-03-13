@@ -38,6 +38,12 @@ func TestSPAFallbackHonorsExcludedPrefixesAndNavigationChecks(t *testing.T) {
 					http.Error(w, "api 404", http.StatusNotFound)
 				}),
 			},
+			{
+				PathPrefix: "/workspaces",
+				NotFoundHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "workspace 404", http.StatusNotFound)
+				}),
+			},
 		},
 	}
 
@@ -74,6 +80,17 @@ func TestSPAFallbackHonorsExcludedPrefixesAndNavigationChecks(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rsp.Code)
 		assert.Contains(t, rsp.Body.String(), "api 404")
+	})
+
+	t.Run("route specific 404 wins before spa fallback", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/workspaces/missing", nil)
+		req.Header.Set("Accept", "text/html")
+		rsp := httptest.NewRecorder()
+
+		ps.router.ServeHTTP(rsp, req)
+
+		assert.Equal(t, http.StatusNotFound, rsp.Code)
+		assert.Contains(t, rsp.Body.String(), "workspace 404")
 	})
 
 	t.Run("non navigation requests get the default 404", func(t *testing.T) {
@@ -137,6 +154,19 @@ func TestRouteErrorPoliciesUseLongestPrefixFor404And405(t *testing.T) {
 
 	t.Run("method not allowed policy uses matching prefix", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workspaces", nil)
+		rsp := httptest.NewRecorder()
+
+		ps.router.ServeHTTP(rsp, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, rsp.Code)
+		assert.Contains(t, rsp.Body.String(), "workspace 405")
+	})
+
+	t.Run("method not allowed falls back to parent prefix when child has no 405", func(t *testing.T) {
+		ps.router.HandleFunc("/workspaces/admin", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).Methods(http.MethodGet)
+		req := httptest.NewRequest(http.MethodPost, "/workspaces/admin", nil)
 		rsp := httptest.NewRecorder()
 
 		ps.router.ServeHTTP(rsp, req)

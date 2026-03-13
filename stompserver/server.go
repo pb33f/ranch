@@ -19,32 +19,9 @@ type UnsubscribeHandlerFunction func(conId string, subId string, destination str
 
 type ApplicationRequestHandlerFunction func(destination string, message []byte, connectionId string)
 
-type IPBlockCheckHandler func(ip string) (blocked bool, errorMessage string)
-
-// funcIPBlockingChecker adapts IPBlockCheckHandler to IPBlockingChecker interface
-type funcIPBlockingChecker struct {
-    checkFunc IPBlockCheckHandler
-}
-
-func (f *funcIPBlockingChecker) IsIPBlocked(ip string) (bool, string) {
-    if f.checkFunc != nil {
-        return f.checkFunc(ip)
-    }
-    return false, ""
-}
-
-func (f *funcIPBlockingChecker) TrackConnection(ip string, sessionID string) {
-    // Not implemented - tracking handled elsewhere
-}
-
-func (f *funcIPBlockingChecker) TrackDisconnection(ip string, sessionID string) {
-    // Not implemented - tracking handled elsewhere
-}
-
-func (f *funcIPBlockingChecker) ExtractRealIP(remoteAddr string, headers map[string][]string) string {
-    // Basic extraction - just return remote address
-    // The actual extraction is done by the caller
-    return remoteAddr
+// ipBlockingCheckerSetter is an optional interface for listeners that support IP blocking
+type ipBlockingCheckerSetter interface {
+    SetIPBlockingChecker(checker IPBlockingChecker)
 }
 
 type StompServer interface {
@@ -58,8 +35,8 @@ type StompServer interface {
     SendMessageToClient(connectionId string, destination string, messageBody []byte)
     // closes all connections from a specific IP address with a custom error message
     CloseConnectionsByIP(ip string, errorMessage string)
-    // sets an IP blocking checker function that gets called before allowing connections
-    SetIPBlockChecker(checker IPBlockCheckHandler)
+    // sets the IP blocking checker that gets called before allowing connections
+    SetIPBlockingChecker(checker IPBlockingChecker)
     // registers a callback for stomp subscribe events
     OnSubscribeEvent(callback SubscribeHandlerFunction)
     // registers a callback for stomp unsubscribe events
@@ -134,7 +111,8 @@ type stompServer struct {
     subscribeCallbacks          []SubscribeHandlerFunction
     unsubscribeCallbacks        []UnsubscribeHandlerFunction
     applicationRequestCallbacks []ApplicationRequestHandlerFunction
-    ipBlockChecker              IPBlockCheckHandler
+    ipBlockingChecker           IPBlockingChecker
+    ipBlockingCheckerMu         sync.RWMutex
 }
 
 func NewStompServer(listener RawConnectionListener, config StompConfig) StompServer {
@@ -229,17 +207,21 @@ func (s *stompServer) CloseConnectionsByIP(ip string, errorMessage string) {
 }
 
 
-func (s *stompServer) SetIPBlockChecker(checker IPBlockCheckHandler) {
-    s.ipBlockChecker = checker
-    
-    // Also set on the underlying WebSocket listener if it exists
-    if wsListener, ok := s.connectionListener.(*webSocketConnectionListener); ok {
-        // Create an adapter to convert the function to the interface the listener expects
-        if checker != nil {
-            wsListener.ipBlockingChecker = &funcIPBlockingChecker{checkFunc: checker}
-        } else {
-            wsListener.ipBlockingChecker = nil
-        }
+func (s *stompServer) getIPBlockingChecker() IPBlockingChecker {
+    s.ipBlockingCheckerMu.RLock()
+    defer s.ipBlockingCheckerMu.RUnlock()
+    return s.ipBlockingChecker
+}
+
+func (s *stompServer) SetIPBlockingChecker(checker IPBlockingChecker) {
+    // store on server for generic (non-WebSocket) listener fallback
+    s.ipBlockingCheckerMu.Lock()
+    s.ipBlockingChecker = checker
+    s.ipBlockingCheckerMu.Unlock()
+
+    // set full interface on listener via optional interface (not concrete type)
+    if setter, ok := s.connectionListener.(ipBlockingCheckerSetter); ok {
+        setter.SetIPBlockingChecker(checker)
     }
 }
 
@@ -282,18 +264,24 @@ func (s *stompServer) waitForConnections() {
             continue
         }
 
-        // Check if IP is blocked before allowing STOMP connection
-        if s.ipBlockChecker != nil {
-            ip := rawConn.GetRemoteAddr()
-            if blocked, errorMessage := s.ipBlockChecker(ip); blocked {
-                // Send ERROR frame and close connection immediately
+        // generic fallback block check for non-WebSocket listeners (e.g. TCP).
+        // for WebSocket listeners, blocking and tracking already happened at the HTTP handler level.
+        if checker := s.getIPBlockingChecker(); checker != nil {
+            // normalize host:port to bare IP; nil headers is correct for TCP (no proxy headers)
+            ip := checker.ExtractRealIP(rawConn.GetRemoteAddr(), nil)
+            if blocked, errorMessage := checker.IsIPBlocked(ip); blocked {
                 errorFrame := frame.New(frame.ERROR, frame.Message, errorMessage)
                 if err := rawConn.WriteFrame(errorFrame); err != nil {
-                    // Log write error but still close connection
                     log.Printf("Failed to send ERROR frame to blocked IP %s: %v", ip, err)
                 }
                 rawConn.Close()
-                continue // Skip creating STOMP connection
+                continue
+            }
+            // only track at server level for listeners that don't handle their own tracking
+            // (e.g. TCP). WebSocket listeners already call TrackConnection in the HTTP handler,
+            // so calling it again here would double-count and halve the effective threshold.
+            if _, hasOwnTracking := s.connectionListener.(ipBlockingCheckerSetter); !hasOwnTracking {
+                checker.TrackConnection(ip, "")
             }
         }
 
