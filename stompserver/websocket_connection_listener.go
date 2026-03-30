@@ -80,6 +80,7 @@ type webSocketConnectionListener struct {
     allowedOrigins        []string
     ipBlockingChecker     IPBlockingChecker
     ipBlockingCheckerMu   sync.RWMutex
+    blockedIPLogged       sync.Map // suppresses repeated log lines for the same blocked IP
 }
 
 type RawConnResult struct {
@@ -111,10 +112,16 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
             realIP := checker.ExtractRealIP(request.RemoteAddr, request.Header)
             if blocked, reason := checker.IsIPBlocked(realIP); blocked {
                 if logger != nil {
-                    logger.Warn(fmt.Sprintf(LogBlockedIPAttempted, realIP, reason))
+                    // only log once per blocked IP to avoid log flooding from persistent scanners
+                    if _, alreadyLogged := l.blockedIPLogged.LoadOrStore(realIP, true); !alreadyLogged {
+                        logger.Warn(fmt.Sprintf(LogBlockedIPAttempted, realIP, reason))
+                    }
                 }
                 writer.WriteHeader(http.StatusForbidden)
                 return
+            } else {
+                // clear suppression so a future re-block logs fresh
+                l.blockedIPLogged.Delete(realIP)
             }
             // track every connection attempt (regardless of whether upgrade succeeds)
             checker.TrackConnection(realIP, extractSessionID(request))
