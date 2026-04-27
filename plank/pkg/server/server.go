@@ -70,6 +70,7 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 	if err = json.Unmarshal(configBytes, &config); err != nil {
 		return nil, err
 	}
+	applyPlatformServerConfigJSONDefaults(&config, configBytes)
 
 	ps := new(platformServer)
 	ps.eventbus = bus.GetBus()
@@ -260,6 +261,12 @@ func (ps *platformServer) StopServer() {
 			ps.serverConfig.Logger.Error(err.Error())
 		}
 		ps.ServerAvailability.Fabric = false
+	}
+
+	if ps.profilerServer != nil {
+		if err = ps.profilerServer.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			ps.serverConfig.Logger.Error(err.Error())
+		}
 	}
 
 	// wait for all teardown jobs to be done. if shutdown deadline arrives earlier

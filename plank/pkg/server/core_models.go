@@ -15,11 +15,14 @@ import (
 	"github.com/pb33f/ranch/stompserver"
 	"golang.org/x/net/http2"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 )
+
+const DefaultDebugProfilerPort = 6062
 
 // PlatformServerConfig holds all the core configuration needed for the functionality of Plank
 type PlatformServerConfig struct {
@@ -32,6 +35,7 @@ type PlatformServerConfig struct {
 	FabricConfig                   *FabricBrokerConfig `json:"fabric_config"`                  // Fabric (websocket) configuration
 	TLSCertConfig                  *TLSCertConfig      `json:"tls_config"`                     // TLS certificate configuration
 	Debug                          bool                `json:"debug"`                          // enable debug logging
+	DebugProfilerPort              int                 `json:"debug_profiler_port"`            // pprof port when debug is enabled; 0 asks the OS for a free port
 	NoBanner                       bool                `json:"no_banner"`                      // start server without displaying the banner
 	ShutdownTimeout                time.Duration       `json:"shutdown_timeout_in_minutes"`    // graceful server shutdown timeout in minutes
 	RestBridgeTimeout              time.Duration       `json:"rest_bridge_timeout_in_minutes"` // rest bridge timeout in minutes
@@ -86,6 +90,8 @@ type platformServer struct {
 	endpointHandlerMap           map[string]http.HandlerFunc       // internal map to store rest endpoint -handler mappings
 	serviceChanToBridgeEndpoints map[string][]string               // internal map to store service channel - endpoint handler key mappings
 	fabricConn                   stompserver.RawConnectionListener // WebSocket listener instance
+	profilerListener             net.Listener                      // debug pprof listener
+	profilerServer               *http.Server                      // debug pprof server
 	ServerAvailability           *ServerAvailability               // server availability (not much used other than for internal monitoring for now)
 	lock                         sync.Mutex                        // lock
 	messageBridgeMap             map[string]*MessageBridge

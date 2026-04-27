@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/pb33f/ranch/bus"
@@ -9,6 +10,7 @@ import (
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"github.com/pb33f/ranch/stompserver"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"path/filepath"
@@ -50,17 +52,9 @@ func (ps *platformServer) initialize() {
 	//	utils.Log.SetFormatter(formatter)
 	//	utils.Log.SetOutput(ps.out)
 
-	// if debug flag is provided enable extra logging. also, enable profiling at port 6060
+	// if debug flag is provided enable extra logging. also, enable profiling.
 	if ps.serverConfig.Debug {
-		go func() {
-			runtime.SetBlockProfileRate(1) // capture traces of all possible contended mutex holders
-			profilerRouter := mux.NewRouter()
-			profilerRouter.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
-			if err := http.ListenAndServe(":6062", profilerRouter); err != nil {
-				panic(err)
-			}
-		}()
-		ps.serverConfig.Logger.Debug("Debug logging and profiling enabled. Available types of profiles at http://localhost:6062/debug/pprof")
+		ps.startDebugProfiler()
 	}
 
 	// set a new route handler
@@ -141,6 +135,31 @@ func (ps *platformServer) initialize() {
 	// configure Fabric
 	ps.configureFabric()
 
+}
+
+func (ps *platformServer) startDebugProfiler() {
+	runtime.SetBlockProfileRate(1) // capture traces of all possible contended mutex holders
+	profilerRouter := mux.NewRouter()
+	profilerRouter.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
+
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", ps.serverConfig.DebugProfilerPort))
+	if err != nil {
+		ps.serverConfig.Logger.Error("debug profiler failed to start", "err", err)
+		return
+	}
+
+	ps.profilerListener = ln
+	ps.profilerServer = &http.Server{Handler: profilerRouter}
+
+	go func() {
+		if err := ps.profilerServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			ps.serverConfig.Logger.Error("debug profiler stopped unexpectedly", "err", err)
+		}
+	}()
+
+	ps.serverConfig.Logger.Debug(
+		"Debug logging and profiling enabled. Available types of profiles",
+		"url", fmt.Sprintf("http://%s/debug/pprof", ln.Addr().String()))
 }
 
 func (ps *platformServer) configureFabric() {

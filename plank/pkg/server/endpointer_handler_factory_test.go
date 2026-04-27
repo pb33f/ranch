@@ -143,9 +143,5 @@ func TestBuildEndpointHandler_CatchPanic(t *testing.T) {
 	ps.eventbus = b
 	assert.HTTPBodyContains(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		panic("peekaboo")
-		return model.Request{
-			Payload:        nil,
-			RequestCommand: "test-request",
-		}
 	}, 5*time.Second, msgChan), "GET", "http://localhost", nil, "Internal Server Error")
 }
