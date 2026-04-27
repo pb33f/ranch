@@ -43,6 +43,7 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 		if err = json.Unmarshal(b, &serverConfig); err != nil {
 			return nil, err
 		}
+		applyPlatformServerConfigJSONDefaults(&serverConfig, b)
 
 		// handle invalid duration by setting it to the default value of 5 minutes
 		if serverConfig.ShutdownTimeout <= 0 {
@@ -93,11 +94,12 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 		//	FormatOptions: &utils.LogFormatOption{},
 		//},
 		Debug:             debug,
+		DebugProfilerPort: DefaultDebugProfilerPort,
 		NoBanner:          noBanner,
 		RestBridgeTimeout: time.Duration(restBridgeTimeout) * time.Minute,
 	}
 
-		if len(cert) > 0 && len(certKey) > 0 {
+	if len(cert) > 0 && len(certKey) > 0 {
 		var err error
 		certKey, err = filepath.Abs(certKey)
 		if err != nil {
@@ -133,6 +135,16 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 	}
 
 	return serverConfig, nil
+}
+
+func applyPlatformServerConfigJSONDefaults(config *PlatformServerConfig, data []byte) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	if _, ok := raw["debug_profiler_port"]; !ok {
+		config.DebugProfilerPort = DefaultDebugProfilerPort
+	}
 }
 
 // ensureResponseInByteSlice takes body as an interface not knowing whether it is already converted to []byte or not.

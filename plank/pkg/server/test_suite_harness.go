@@ -66,6 +66,7 @@ func GetBasicTestServerConfig(rootDir, outLog, accessLog, errLog string, port in
 		Host:              "localhost",
 		Port:              port,
 		RestBridgeTimeout: time.Minute,
+		DebugProfilerPort: 0,
 		//LogConfig: &utils.LogConfig{
 		//	OutputLog:     outLog,
 		//	AccessLog:     accessLog,
@@ -202,6 +203,7 @@ func GetTestFabricBrokerConfig() *FabricBrokerConfig {
 func CreateConfigJsonForTest() (string, error) {
 	configJsonContent := `{
   "debug": true,
+  "debug_profiler_port": 0,
   "no_banner": true,
   "root_dir": "./",
   "host": "localhost",
