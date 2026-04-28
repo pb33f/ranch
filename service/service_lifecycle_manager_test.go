@@ -24,7 +24,7 @@ func TestServiceLifecycleManager_GetServiceHooks(t *testing.T) {
 	sr := newTestServiceRegistry()
 	lcm := newTestServiceLifecycleManager(sr)
 	svc := &mockLifecycleHookEnabledService{}
-	sr.RegisterService(svc, "another-test-channel")
+	assert.NoError(t, sr.RegisterService(svc, "another-test-channel"))
 
 	// act
 	hooks := lcm.GetOnReadyCapableService("another-test-channel")
@@ -50,7 +50,7 @@ func TestServiceLifecycleManager_GetServiceHooks_LifecycleHooksNotImplemented(t 
 	sr := newTestServiceRegistry()
 	lcm := newTestServiceLifecycleManager(sr)
 	svc := &mockInitializableService{}
-	sr.RegisterService(svc, "test-channel")
+	assert.NoError(t, sr.RegisterService(svc, "test-channel"))
 
 	// act
 	hooks := lcm.GetOnReadyCapableService("test-channel")
@@ -76,7 +76,7 @@ func TestServiceLifecycleManager_OverrideRESTBridgeConfig(t *testing.T) {
 	wg := sync.WaitGroup{}
 	sr := newTestServiceRegistry()
 	lcm := newTestServiceLifecycleManager(sr)
-	sr.lifecycleManager = lcm.(*serviceLifecycleManager)
+	sr.lifecycleManager = lcm
 	_ = sr.RegisterService(&mockLifecycleHookEnabledService{}, "another-test-channel")
 
 	// arrange: test payload

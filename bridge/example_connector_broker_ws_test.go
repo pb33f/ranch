@@ -14,7 +14,7 @@ import (
 func Example_connectUsingBrokerViaWebSocket() {
 
 	// get a reference to the event bus.
-	b := bus.GetBus()
+	b := bus.NewEventBus()
 
 	// create a broker connector configuration, using WebSockets.
 	config := &bridge.BrokerConnectorConfig{
@@ -51,7 +51,10 @@ func Example_connectUsingBrokerViaWebSocket() {
 			// unmarshal message.
 			r := &model.Response{}
 			d := m.Payload.([]byte)
-			json.Unmarshal(d, &r)
+			if err := json.Unmarshal(d, &r); err != nil {
+				fmt.Printf("Unable to unmarshal message: %s\n", err)
+				continue
+			}
 			fmt.Printf("Message Received: %s\n", r.Payload.(string))
 
 			n++
@@ -69,5 +72,5 @@ func Example_connectUsingBrokerViaWebSocket() {
 
 	<-done
 
-	c.Disconnect()
+	_ = c.Disconnect()
 }

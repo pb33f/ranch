@@ -7,10 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/service"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 )
@@ -48,7 +47,7 @@ func (ps *PingPongService) HandleServiceRequest(request *model.Request, core ser
 	switch request.RequestCommand {
 	// ping-post request type accepts the payload as a POJO
 	case "ping-post":
-		m := make(map[string]interface{})
+		m := make(map[string]any)
 		m["timestamp"] = time.Now().Unix()
 		err := json.Unmarshal(request.Payload.([]byte), &m)
 		if err != nil {
@@ -58,7 +57,7 @@ func (ps *PingPongService) HandleServiceRequest(request *model.Request, core ser
 		}
 	// ping-get request type accepts the payload as a string
 	case "ping-get":
-		rsp := make(map[string]interface{})
+		rsp := make(map[string]any)
 		val := request.Payload.(string)
 		rsp["payload"] = val + "-response"
 		rsp["timestamp"] = time.Now().Unix()
@@ -103,7 +102,7 @@ func (ps *PingPongService) GetRESTBridgeConfig() []*service.RESTBridgeConfig {
 			AllowHead:      true,
 			AllowOptions:   true,
 			FabricRequestBuilder: func(w http.ResponseWriter, r *http.Request) model.Request {
-				body, _ := ioutil.ReadAll(r.Body)
+				body, _ := io.ReadAll(r.Body)
 				return model.CreateServiceRequest("ping-post", body)
 			},
 		},
@@ -122,15 +121,14 @@ func (ps *PingPongService) GetRESTBridgeConfig() []*service.RESTBridgeConfig {
 			Uri:            "/rest/ping-pong/{from}/{to}/{message}",
 			Method:         http.MethodGet,
 			FabricRequestBuilder: func(w http.ResponseWriter, r *http.Request) model.Request {
-				pathParams := mux.Vars(r)
 				return model.Request{
 					Id:             &uuid.UUID{},
 					RequestCommand: "ping-get",
 					Payload: fmt.Sprintf(
 						"From %s to %s: %s",
-						pathParams["from"],
-						pathParams["to"],
-						pathParams["message"])}
+						r.PathValue("from"),
+						r.PathValue("to"),
+						r.PathValue("message"))}
 			},
 		},
 	}

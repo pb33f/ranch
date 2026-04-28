@@ -71,5 +71,7 @@ func (l *Limiter) handleLimited(w http.ResponseWriter, event Event) {
 		ResetAt:    event.ResetAt.Unix(),
 		RetryAfter: retryAfter,
 	}
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

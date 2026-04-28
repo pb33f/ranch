@@ -12,7 +12,7 @@ import (
 func Example_connectUsingBrokerViaTCP() {
 
 	// get a reference to the event bus.
-	b := bus.GetBus()
+	b := bus.NewEventBus()
 
 	// create a broker connector configuration, using WebSockets.
 	// Make sure you have a STOMP TCP server running like RabbitMQ
@@ -30,7 +30,7 @@ func Example_connectUsingBrokerViaTCP() {
 	if err != nil {
 		fmt.Printf("unable to connect, error: %e", err)
 	}
-	defer c.Disconnect()
+	defer func() { _ = c.Disconnect() }()
 
 	// subscribe to our demo simple-stream
 	s, _ := c.Subscribe("/queue/sample")
@@ -63,7 +63,7 @@ func Example_connectUsingBrokerViaTCP() {
 	// send messages
 	var producer = func() {
 		for i := 0; i < 5; i++ {
-			c.SendMessage("/queue/sample", "text/plain", []byte(fmt.Sprintf("message: %d", i)))
+			_ = c.SendMessage("/queue/sample", "text/plain", []byte(fmt.Sprintf("message: %d", i)))
 		}
 	}
 

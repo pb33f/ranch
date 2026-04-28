@@ -26,7 +26,7 @@ func (e neuteredStatFile) Stat() (os.FileInfo, error) {
 	if s.IsDir() {
 	LOOP:
 		for {
-			fl, err := e.File.Readdir(e.readDirCount)
+			fl, err := e.Readdir(e.readDirCount)
 			switch err {
 			case io.EOF:
 				break LOOP

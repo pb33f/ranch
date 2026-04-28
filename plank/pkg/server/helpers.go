@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/pb33f/ranch/bus"
+	"github.com/pb33f/ranch/transport/fabric"
 
 	"os"
 	"path/filepath"
@@ -36,7 +36,7 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 	// if config file flag is provided, read directly from the file
 	if len(configFile) > 0 {
 		var serverConfig PlatformServerConfig
-		b, err := os.ReadFile(configFile)
+		b, err := os.ReadFile(configFile) // #nosec G304 -- config file path is intentionally user supplied.
 		if err != nil {
 			return nil, err
 		}
@@ -56,10 +56,10 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 		}
 
 		// the raw value from the config.json needs to be multiplied by time.Minute otherwise it's interpreted as nanosecond
-		serverConfig.ShutdownTimeout = serverConfig.ShutdownTimeout * time.Minute
+		serverConfig.ShutdownTimeout *= time.Minute
 
 		// the raw value from the config.json needs to be multiplied by time.Minute otherwise it's interpreted as nanosecond
-		serverConfig.RestBridgeTimeout = serverConfig.RestBridgeTimeout * time.Minute
+		serverConfig.RestBridgeTimeout *= time.Minute
 
 		// convert map of cache control rules of SpaConfig into an array
 		if serverConfig.SpaConfig != nil {
@@ -81,18 +81,11 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 
 	// instantiate a server config
 	serverConfig := &PlatformServerConfig{
-		Host:            host,
-		Port:            port,
-		RootDir:         rootDir,
-		StaticDir:       static,
-		ShutdownTimeout: time.Duration(shutdownTimeoutInMinutes) * time.Minute,
-		//LogConfig: &utils.LogConfig{
-		//	AccessLog:     accessLog,
-		//	ErrorLog:      errorLog,
-		//	OutputLog:     outputLog,
-		//	Root:          rootDir,
-		//	FormatOptions: &utils.LogFormatOption{},
-		//},
+		Host:              host,
+		Port:              port,
+		RootDir:           rootDir,
+		StaticDir:         static,
+		ShutdownTimeout:   time.Duration(shutdownTimeoutInMinutes) * time.Minute,
 		Debug:             debug,
 		DebugProfilerPort: DefaultDebugProfilerPort,
 		NoBanner:          noBanner,
@@ -125,7 +118,7 @@ func generatePlatformServerConfig(f *serverConfigFactory) (*PlatformServerConfig
 	if !noFabricBroker {
 		serverConfig.FabricConfig = &FabricBrokerConfig{
 			FabricEndpoint: fabricEndpoint,
-			EndpointConfig: &bus.EndpointConfig{
+			EndpointConfig: &fabric.EndpointConfig{
 				TopicPrefix:           topicPrefix,
 				UserQueuePrefix:       queuePrefix,
 				AppRequestPrefix:      requestPrefix,
@@ -150,10 +143,10 @@ func applyPlatformServerConfigJSONDefaults(config *PlatformServerConfig, data []
 // ensureResponseInByteSlice takes body as an interface not knowing whether it is already converted to []byte or not.
 // if it is not of []byte type it marshals the payload using json.Marshal. otherwise, the input
 // byte slice is returned as-is.
-func ensureResponseInByteSlice(body interface{}) (bytes []byte, err error) {
-	switch body.(type) {
+func ensureResponseInByteSlice(body any) (bytes []byte, err error) {
+	switch body := body.(type) {
 	case []byte:
-		bytes, err = body.([]byte), nil
+		bytes, err = body, nil
 	default:
 		bytes, err = json.Marshal(body)
 	}

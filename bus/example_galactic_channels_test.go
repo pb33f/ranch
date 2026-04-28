@@ -14,7 +14,7 @@ import (
 
 func Example_usingGalacticChannels() {
 	// get a pointer to the bus.
-	b := bus.GetBus()
+	b := bus.NewEventBus()
 
 	// get a pointer to the channel manager
 	cm := b.GetChannelManager()
@@ -41,7 +41,10 @@ func Example_usingGalacticChannels() {
 			// unmarshal the payload into a Response object (used by fabric services)
 			r := &model.Response{}
 			d := msg.Payload.([]byte)
-			json.Unmarshal(d, &r)
+			if err := json.Unmarshal(d, &r); err != nil {
+				fmt.Printf("Unable to unmarshal response: %s\n", err)
+				return
+			}
 			fmt.Printf("Stream Ticked: %s\n", r.Payload.(string))
 			count++
 			if count >= 5 {

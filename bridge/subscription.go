@@ -43,7 +43,7 @@ func (s *subscription) Unsubscribe() error {
 
 	// if we're using TCP
 	if s.stompTCPSub != nil {
-		go s.stompTCPSub.Unsubscribe() // local broker hangs, so lets make sure it is non blocking.
+		go func() { _ = s.stompTCPSub.Unsubscribe() }() // local broker hangs, so lets make sure it is non blocking.
 		close(s.c)
 		return nil
 	}

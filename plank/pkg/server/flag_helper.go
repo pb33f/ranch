@@ -102,7 +102,7 @@ func (f *serverConfigFactory) RestBridgeTimeout() int64 {
 
 // parseFlags reads OS arguments into the FlagSet in this factory instance
 func (f *serverConfigFactory) parseFlags(args []string) {
-	f.flagSet.Parse(args[1:])
+	_ = f.flagSet.Parse(args[1:])
 	f.flagsParsed = flag.Parsed()
 }
 
@@ -110,12 +110,12 @@ func (f *serverConfigFactory) parseFlags(args []string) {
 // flags. see configureFlagsInFlagSet() for detailed flag defining logic.
 func (f *serverConfigFactory) configureFlags(flagset *flag.FlagSet) {
 	viper.SetEnvPrefix("PLANK_SERVER")
-	viper.BindEnv("hostname")
-	viper.BindEnv("port")
-	viper.BindEnv("rootdir")
+	_ = viper.BindEnv("hostname")
+	_ = viper.BindEnv("port")
+	_ = viper.BindEnv("rootdir")
 	f.flagSet = flagset
 	f.configureFlagsInFlagSet(f.flagSet)
-	viper.BindPFlags(f.flagSet)
+	_ = viper.BindPFlags(f.flagSet)
 }
 
 // configureFlagsInFlagSet takes the pointer to an arbitrary FlagSet instance and

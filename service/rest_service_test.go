@@ -5,11 +5,14 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/store"
 	"github.com/stretchr/testify/assert"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -20,6 +23,42 @@ import (
 type testItem struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
+}
+
+func TestRestService_HandleServiceRequestContext(t *testing.T) {
+	core := newTestFabricCore(RestServiceChannel)
+	restService := &restService{}
+	type contextKey string
+	key := contextKey("request")
+
+	restService.httpClient.Transport = RoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		assert.Equal(t, "request-1", req.Context().Value(key))
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(bytes.NewBufferString("test-response-body")),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	mh, _ := core.Bus().ListenStream(RestServiceChannel)
+	mh.Handle(func(message *model.Message) {
+		response := message.Payload.(*model.Response)
+		assert.Equal(t, "test-response-body", response.Payload)
+		wg.Done()
+	}, func(e error) {
+		assert.Fail(t, "unexpected error")
+	})
+
+	ctx := context.WithValue(context.Background(), key, "request-1")
+	restService.HandleServiceRequestContext(ctx, &model.Request{
+		Payload: &RestServiceRequest{
+			Uri:          "http://localhost:4444/test-url",
+			ResponseType: reflect.TypeOf(""),
+		},
+	}, core)
+	wg.Wait()
 }
 
 func TestRestServiceRequest_marshalBody(t *testing.T) {
@@ -41,8 +80,11 @@ func TestRestServiceRequest_marshalBody(t *testing.T) {
 	assert.Equal(t, expectedValue, body)
 }
 
-func TestRestService_AutoRegistration(t *testing.T) {
-	assert.NotNil(t, GetServiceRegistry().(*serviceRegistry).services[restServiceChannel])
+func TestRestService_Registration(t *testing.T) {
+	eventBus := bus.NewEventBus()
+	registry := NewServiceRegistry(eventBus, store.NewManager(eventBus)).(*serviceRegistry)
+	assert.Nil(t, registry.RegisterService(NewRestService(), RestServiceChannel))
+	assert.NotNil(t, registry.services[RestServiceChannel])
 }
 
 // RoundTripFunc .
@@ -54,7 +96,7 @@ func (f RoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestRestService_HandleServiceRequest(t *testing.T) {
-	core := newTestFabricCore(restServiceChannel)
+	core := newTestFabricCore(RestServiceChannel)
 
 	restService := &restService{}
 	var lastHttpRequest *http.Request
@@ -62,7 +104,7 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 		lastHttpRequest = req
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("test-response-body")),
+			Body:       io.NopCloser(bytes.NewBufferString("test-response-body")),
 			Header:     make(http.Header),
 		}, nil
 	})
@@ -72,7 +114,7 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	mh, _ := core.Bus().ListenStream(restServiceChannel)
+	mh, _ := core.Bus().ListenStream(RestServiceChannel)
 	mh.Handle(
 		func(message *model.Message) {
 			lastResponse = message.Payload.(*model.Response)
@@ -100,7 +142,7 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 	assert.Equal(t, lastHttpRequest.Header.Get("header1"), "value1")
 	assert.Equal(t, lastHttpRequest.Header.Get("header2"), "value2")
 	assert.Equal(t, lastHttpRequest.Header.Get("Content-Type"), "application/merge-patch+json")
-	sentBody, _ := ioutil.ReadAll(lastHttpRequest.Body)
+	sentBody, _ := io.ReadAll(lastHttpRequest.Body)
 	assert.Equal(t, sentBody, []byte("test-body"))
 
 	assert.NotNil(t, lastResponse)
@@ -111,7 +153,7 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 		lastHttpRequest = req
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBufferString(`{"name": "test-name", "count": 2}`)),
+			Body:       io.NopCloser(bytes.NewBufferString(`{"name": "test-name", "count": 2}`)),
 			Header:     make(http.Header),
 		}, nil
 	})
@@ -151,13 +193,13 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 
 	wg.Wait()
 
-	assert.Equal(t, lastResponse.Payload, map[string]interface{}{"name": "test-name", "count": float64(2)})
+	assert.Equal(t, lastResponse.Payload, map[string]any{"name": "test-name", "count": float64(2)})
 
 	restService.httpClient.Transport = RoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		lastHttpRequest = req
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBuffer([]byte{1, 2, 3, 4, 5})),
+			Body:       io.NopCloser(bytes.NewBuffer([]byte{1, 2, 3, 4, 5})),
 			Header:     make(http.Header),
 		}, nil
 	})
@@ -176,7 +218,7 @@ func TestRestService_HandleServiceRequest(t *testing.T) {
 }
 
 func TestRestService_HandleJavaServiceRequest(t *testing.T) {
-	core := newTestFabricCore(restServiceChannel)
+	core := newTestFabricCore(RestServiceChannel)
 
 	wg := sync.WaitGroup{}
 
@@ -187,14 +229,14 @@ func TestRestService_HandleJavaServiceRequest(t *testing.T) {
 		defer wg.Done()
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("test-response-body")),
+			Body:       io.NopCloser(bytes.NewBufferString("test-response-body")),
 			Header:     make(http.Header),
 		}, nil
 	})
 
 	wg.Add(1)
 	restService.HandleServiceRequest(&model.Request{
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"uri":      "http://localhost:4444/test-url",
 			"headers":  map[string]string{"header1": "value1", "header2": "value2"},
 			"method":   "UPDATE",
@@ -211,19 +253,19 @@ func TestRestService_HandleJavaServiceRequest(t *testing.T) {
 	assert.Equal(t, lastHttpRequest.Header.Get("header1"), "value1")
 	assert.Equal(t, lastHttpRequest.Header.Get("header2"), "value2")
 	assert.Equal(t, lastHttpRequest.Header.Get("Content-Type"), "application/merge-patch+json")
-	sentBody, _ := ioutil.ReadAll(lastHttpRequest.Body)
+	sentBody, _ := io.ReadAll(lastHttpRequest.Body)
 	assert.Equal(t, sentBody, []byte("test-body"))
 }
 
 func TestRestService_HandleServiceRequest_InvalidInput(t *testing.T) {
-	core := newTestFabricCore(restServiceChannel)
+	core := newTestFabricCore(RestServiceChannel)
 
 	restService := &restService{}
 	var lastResponse *model.Response
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	mh, _ := core.Bus().ListenStream(restServiceChannel)
+	mh, _ := core.Bus().ListenStream(RestServiceChannel)
 	mh.Handle(
 		func(message *model.Message) {
 			lastResponse = message.Payload.(*model.Response)
@@ -280,7 +322,7 @@ func TestRestService_HandleServiceRequest_InvalidInput(t *testing.T) {
 		return &http.Response{
 			StatusCode: 404,
 			Status:     "404 Not Found",
-			Body:       ioutil.NopCloser(bytes.NewBufferString("error-response")),
+			Body:       io.NopCloser(bytes.NewBufferString("error-response")),
 			Header:     make(http.Header),
 		}, nil
 	})
@@ -300,7 +342,7 @@ func TestRestService_HandleServiceRequest_InvalidInput(t *testing.T) {
 	restService.httpClient.Transport = RoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("}")),
+			Body:       io.NopCloser(bytes.NewBufferString("}")),
 			Header:     make(http.Header),
 		}, nil
 	})
@@ -320,7 +362,7 @@ func TestRestService_HandleServiceRequest_InvalidInput(t *testing.T) {
 }
 
 func TestRestService_setBaseHost(t *testing.T) {
-	core := newTestFabricCore(restServiceChannel)
+	core := newTestFabricCore(RestServiceChannel)
 	restService := &restService{}
 
 	wg := sync.WaitGroup{}
@@ -331,7 +373,7 @@ func TestRestService_setBaseHost(t *testing.T) {
 		wg.Done()
 		return &http.Response{
 			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewBufferString("test-response-body")),
+			Body:       io.NopCloser(bytes.NewBufferString("test-response-body")),
 			Header:     make(http.Header),
 		}, nil
 	})

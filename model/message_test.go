@@ -21,6 +21,43 @@ func TestMessage_CastPayloadToType_HappyPath(t *testing.T) {
 	assert.EqualValues(t, "dummy-value-coming-through", dest.RequestCommand)
 }
 
+func TestDecode_ByteWrappedResponse(t *testing.T) {
+	msg := getNewTestMessage()
+
+	dest, err := Decode[Request](msg)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "dummy-value-coming-through", dest.RequestCommand)
+}
+
+func TestDecode_PointerPayload(t *testing.T) {
+	msg := getUnmarshalledResponseMessage(&Request{RequestCommand: "pointer-payload"})
+
+	dest, err := Decode[*Request](msg)
+
+	assert.Nil(t, err)
+	assert.NotNil(t, dest)
+	assert.Equal(t, "pointer-payload", dest.RequestCommand)
+}
+
+func TestDecode_MapPayload(t *testing.T) {
+	msg := getUnmarshalledResponseMessage(map[string]any{"request": "mapped-payload"})
+
+	dest, err := Decode[Request](msg)
+
+	assert.Nil(t, err)
+	assert.Equal(t, "mapped-payload", dest.RequestCommand)
+}
+
+func TestDecode_ErrorResponse(t *testing.T) {
+	msg := getErrorResponseMessage()
+
+	_, err := Decode[Request](msg)
+
+	assert.NotNil(t, err)
+	assert.EqualValues(t, "Bad Request", err.Error())
+}
+
 func TestMessage_CastPayloadToType_BadPayload(t *testing.T) {
 	// arrange
 	msg := getNewTestMessage()
@@ -79,7 +116,7 @@ func TestMessage_CastPayloadToType_UnmarshalledResponse_ByteSlice(t *testing.T) 
 
 func TestMessage_CastPayloadToType_UnmarshalledResponse_Map(t *testing.T) {
 	// arrange
-	msg := getUnmarshalledResponseMessage(map[string]interface{}{"418": "I am a teapot"})
+	msg := getUnmarshalledResponseMessage(map[string]any{"418": "I am a teapot"})
 	dest := make(map[string]string)
 
 	// act
@@ -119,7 +156,7 @@ func getNewTestMessage() *Message {
 	}
 }
 
-func getUnmarshalledResponseMessage(payload interface{}) *Message {
+func getUnmarshalledResponseMessage(payload any) *Message {
 	rspPayload := &Response{
 		Id:      &uuid.UUID{},
 		Payload: payload,

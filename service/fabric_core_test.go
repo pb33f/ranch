@@ -14,7 +14,7 @@ import (
 )
 
 func newTestFabricCore(channelName string) FabricServiceCore {
-	eventBus := bus.NewEventBusInstance()
+	eventBus := bus.NewEventBus()
 	eventBus.GetChannelManager().CreateChannel(channelName)
 	return &fabricCore{
 		channelName: channelName,
@@ -147,13 +147,13 @@ func TestFabricCore_RestServiceRequest(t *testing.T) {
 
 	core := newTestFabricCore("test-channel")
 
-	core.Bus().GetChannelManager().CreateChannel(restServiceChannel)
+	core.Bus().GetChannelManager().CreateChannel(RestServiceChannel)
 
 	var lastRequest *model.Request
 
 	wg := sync.WaitGroup{}
 
-	mh, _ := core.Bus().ListenRequestStream(restServiceChannel)
+	mh, _ := core.Bus().ListenRequestStream(RestServiceChannel)
 	mh.Handle(
 		func(message *model.Message) {
 			lastRequest = message.Payload.(*model.Request)
@@ -180,9 +180,9 @@ func TestFabricCore_RestServiceRequest(t *testing.T) {
 	wg.Wait()
 
 	wg.Add(1)
-	core.Bus().SendResponseMessage(restServiceChannel, &model.Response{
+	assert.NoError(t, core.Bus().SendResponseMessage(RestServiceChannel, &model.Response{
 		Payload: "test",
-	}, lastRequest.Id)
+	}, lastRequest.Id))
 	wg.Wait()
 
 	assert.NotNil(t, lastSuccess)
@@ -209,11 +209,11 @@ func TestFabricCore_RestServiceRequest(t *testing.T) {
 	wg.Wait()
 
 	wg.Add(1)
-	core.Bus().SendResponseMessage(restServiceChannel, &model.Response{
+	assert.NoError(t, core.Bus().SendResponseMessage(RestServiceChannel, &model.Response{
 		ErrorMessage: "error",
 		Error:        true,
 		ErrorCode:    1,
-	}, lastRequest.Id)
+	}, lastRequest.Id))
 	wg.Wait()
 
 	assert.Nil(t, lastSuccess)
@@ -238,7 +238,7 @@ func TestFabricCore_RestServiceRequest(t *testing.T) {
 	wg.Wait()
 
 	wg.Add(1)
-	core.Bus().SendErrorMessage(restServiceChannel, errors.New("test-error"), lastRequest.Id)
+	assert.NoError(t, core.Bus().SendErrorMessage(RestServiceChannel, errors.New("test-error"), lastRequest.Id))
 	wg.Wait()
 
 	assert.Nil(t, lastSuccess)

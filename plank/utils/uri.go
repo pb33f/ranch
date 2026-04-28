@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+var protocolRegExp = regexp.MustCompile("https?://")
+
 // SanitizeUrl removes excess forward slashes as well as pad the end of the URL with / if suffixSlash is true
 func SanitizeUrl(url string, suffixSlash bool) string {
 	if len(url) == 0 {
@@ -16,19 +18,19 @@ func SanitizeUrl(url string, suffixSlash bool) string {
 	strBuilder := strings.Builder{}
 	isAtForwardSlash := false
 	startLoc := 0
-	protocolRegExp, _ := regexp.Compile("https?://")
 	protocolMatch := protocolRegExp.FindAllString(url, 1)
 	if len(protocolMatch) > 0 {
 		startLoc += len(protocolMatch[0])
 		strBuilder.WriteString(protocolMatch[0])
 	}
 
-	for _, c := range url[startLoc:] {
-		if isAtForwardSlash && byte(c) == '/' {
+	for i := startLoc; i < len(url); i++ {
+		c := url[i]
+		if isAtForwardSlash && c == '/' {
 			continue
 		}
-		isAtForwardSlash = byte(c) == '/'
-		strBuilder.WriteByte(byte(c))
+		isAtForwardSlash = c == '/'
+		strBuilder.WriteByte(c)
 	}
 
 	sanitizedUrl := strBuilder.String()

@@ -4,11 +4,10 @@
 package server
 
 import (
-	"github.com/gorilla/mux"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
+	"github.com/pb33f/ranch/plank/pkg/routing"
 	"github.com/pb33f/ranch/plank/utils"
 	"net/http"
-	"regexp"
 )
 
 // SpaConfig shorthand for SinglePageApplication Config is used to configure routes for your SPAs like
@@ -24,11 +23,6 @@ type SpaConfig struct {
 	FallbackPredicate func(*http.Request) bool `json:"-"`
 
 	cacheControlRulePairs []middleware.CacheControlRulePair
-}
-
-type regexCacheControlRulePair struct {
-	regex            *regexp.Regexp
-	cacheControlRule string
 }
 
 // NewSpaConfig takes location to where the SPA content is as an input and returns a sanitized
@@ -59,7 +53,7 @@ func (s *SpaConfig) CollateCacheControlRules() {
 }
 
 // CacheControlMiddleware returns the middleware func to be used in route configuration
-func (s *SpaConfig) CacheControlMiddleware() mux.MiddlewareFunc {
+func (s *SpaConfig) CacheControlMiddleware() routing.MiddlewareFunc {
 	return func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// apply cache control rule that matches first

@@ -1,17 +1,20 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package fabric
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	ranchbus "github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/stompserver"
 	"github.com/stretchr/testify/assert"
 	"sync"
 	"testing"
+	"time"
 )
 
 type MockStompServerMessage struct {
@@ -22,20 +25,33 @@ type MockStompServerMessage struct {
 
 type MockStompServer struct {
 	started                           bool
+	ready                             chan struct{}
+	readyOnce                         sync.Once
 	sentMessages                      []MockStompServerMessage
 	subscribeHandlerFunction          stompserver.SubscribeHandlerFunction
 	connectionEventCallbacks          map[stompserver.StompSessionEventType]func(event *stompserver.ConnEvent)
 	unsubscribeHandlerFunction        stompserver.UnsubscribeHandlerFunction
 	applicationRequestHandlerFunction stompserver.ApplicationRequestHandlerFunction
 	wg                                *sync.WaitGroup
+	onStop                            func()
 }
 
 func (s *MockStompServer) Start() {
 	s.started = true
+	s.readyOnce.Do(func() {
+		close(s.ready)
+	})
 }
 
 func (s *MockStompServer) Stop() {
 	s.started = false
+	if s.onStop != nil {
+		s.onStop()
+	}
+}
+
+func (s *MockStompServer) Ready() <-chan struct{} {
+	return s.ready
 }
 
 func (s *MockStompServer) SendMessage(destination string, messageBody []byte) {
@@ -77,15 +93,21 @@ func (s *MockStompServer) CloseConnectionsByIP(ip string, errorMessage string) {
 	// Mock implementation - no-op
 }
 
-
 func (s *MockStompServer) SetIPBlockingChecker(checker stompserver.IPBlockingChecker) {
 	// mock implementation - no-op
 }
 
-func newTestFabricEndpoint(bus EventBus, config EndpointConfig) (*fabricEndpoint, *MockStompServer) {
+func newTestEventBus() ranchbus.EventBus {
+	return ranchbus.NewEventBus()
+}
 
-	fe := newFabricEndpoint(bus, nil, config).(*fabricEndpoint)
-	ms := &MockStompServer{connectionEventCallbacks: make(map[stompserver.StompSessionEventType]func(event *stompserver.ConnEvent))}
+func newTestFabricEndpoint(bus ranchbus.EventBus, config EndpointConfig) (*fabricEndpoint, *MockStompServer) {
+
+	fe := newFabricEndpoint(bus, nil, config)
+	ms := &MockStompServer{
+		ready:                    make(chan struct{}),
+		connectionEventCallbacks: make(map[stompserver.StompSessionEventType]func(event *stompserver.ConnEvent)),
+	}
 
 	fe.server = ms
 	fe.initHandlers()
@@ -114,13 +136,82 @@ func TestFabricEndpoint_newFabricEndpoint(t *testing.T) {
 	assert.Equal(t, fe.config.AppRequestPrefix, "")
 }
 
+func TestNew_ValidatesEndpointConfig(t *testing.T) {
+	_, err := New(newTestEventBus(), nil, EndpointConfig{})
+	assert.EqualError(t, err, "invalid TopicPrefix")
+
+	_, err = New(newTestEventBus(), nil, EndpointConfig{TopicPrefix: "asd"})
+	assert.EqualError(t, err, "invalid TopicPrefix")
+
+	_, err = New(newTestEventBus(), nil, EndpointConfig{
+		TopicPrefix:           "/topic",
+		AppRequestQueuePrefix: "/pub",
+	})
+	assert.EqualError(t, err, "missing UserQueuePrefix")
+
+	ep, err := New(newTestEventBus(), nil, EndpointConfig{TopicPrefix: "/topic"})
+	assert.NoError(t, err)
+	assert.NotNil(t, ep)
+}
+
 func TestFabricEndpoint_StartAndStop(t *testing.T) {
 	fe, mockServer := newTestFabricEndpoint(nil, EndpointConfig{})
 	assert.Equal(t, mockServer.started, false)
-	fe.Start()
+	assert.NoError(t, fe.Start(context.Background()))
 	assert.Equal(t, mockServer.started, true)
-	fe.Stop()
+	assert.NoError(t, fe.Stop())
 	assert.Equal(t, mockServer.started, false)
+}
+
+func TestFabricEndpoint_StartCanceledBeforeStartCanRetry(t *testing.T) {
+	fe, mockServer := newTestFabricEndpoint(nil, EndpointConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.ErrorIs(t, fe.Start(ctx), context.Canceled)
+	assert.False(t, mockServer.started)
+	select {
+	case <-fe.Ready():
+		t.Fatal("endpoint became ready after canceled start")
+	default:
+	}
+
+	assert.NoError(t, fe.Start(context.Background()))
+	assert.True(t, mockServer.started)
+	select {
+	case <-fe.Ready():
+	case <-time.After(time.Second):
+		t.Fatal("endpoint did not become ready after retry")
+	}
+}
+
+func TestFabricEndpoint_StartContextCancelDoesNotStopReadyServer(t *testing.T) {
+	fe, mockServer := newTestFabricEndpoint(nil, EndpointConfig{})
+	stopped := make(chan struct{})
+	var stopOnce sync.Once
+	mockServer.onStop = func() {
+		stopOnce.Do(func() {
+			close(stopped)
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	assert.NoError(t, fe.Start(ctx))
+	cancel()
+
+	select {
+	case <-stopped:
+		t.Fatal("ready endpoint stopped when start context was canceled")
+	case <-time.After(50 * time.Millisecond):
+	}
+	assert.True(t, mockServer.started)
+
+	assert.NoError(t, fe.Stop())
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("endpoint stop did not stop server")
+	}
 }
 
 func TestFabricEndpoint_SubscribeEvent(t *testing.T) {
@@ -133,8 +224,8 @@ func TestFabricEndpoint_SubscribeEvent(t *testing.T) {
 	bus.GetChannelManager().CreateChannel("test-service")
 
 	monitorWg := sync.WaitGroup{}
-	var monitorEvents []*MonitorEvent
-	bus.AddMonitorEventListener(func(monitorEvt *MonitorEvent) {
+	var monitorEvents []*ranchbus.MonitorEvent
+	bus.AddMonitorEventListener(func(monitorEvt *ranchbus.MonitorEvent) {
 		monitorEvents = append(monitorEvents, monitorEvt)
 		monitorWg.Done()
 	}, FabricEndpointSubscribeEvt)
@@ -143,7 +234,7 @@ func TestFabricEndpoint_SubscribeEvent(t *testing.T) {
 	mockServer.subscribeHandlerFunction("con1", "sub1", "/topic2/test-service", nil)
 	assert.Equal(t, len(fe.chanMappings), 0)
 
-	bus.SendResponseMessage("test-service", "test-message", nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", "test-message", nil))
 	assert.Equal(t, len(mockServer.sentMessages), 0)
 
 	// subscribe to valid channel
@@ -191,21 +282,21 @@ func TestFabricEndpoint_SubscribeEvent(t *testing.T) {
 	mockServer.wg = &sync.WaitGroup{}
 	mockServer.wg.Add(1)
 
-	bus.SendResponseMessage("test-service", "test-message", nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", "test-message", nil))
 
 	mockServer.wg.Wait()
 
 	mockServer.wg.Add(1)
-	bus.SendResponseMessage("test-service", []byte{1, 2, 3}, nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", []byte{1, 2, 3}, nil))
 	mockServer.wg.Wait()
 
 	mockServer.wg.Add(1)
 	msg := MockStompServerMessage{Destination: "test", Payload: []byte("test-message")}
-	bus.SendResponseMessage("test-service", msg, nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", msg, nil))
 	mockServer.wg.Wait()
 
 	mockServer.wg.Add(1)
-	bus.SendErrorMessage("test-service", errors.New("test-error"), nil)
+	assert.NoError(t, bus.SendErrorMessage("test-service", errors.New("test-error"), nil))
 	mockServer.wg.Wait()
 
 	assert.Equal(t, len(mockServer.sentMessages), 4)
@@ -214,42 +305,42 @@ func TestFabricEndpoint_SubscribeEvent(t *testing.T) {
 	assert.Equal(t, mockServer.sentMessages[1].Payload, []byte{1, 2, 3})
 
 	var sentMsg MockStompServerMessage
-	json.Unmarshal(mockServer.sentMessages[2].Payload, &sentMsg)
+	assert.NoError(t, json.Unmarshal(mockServer.sentMessages[2].Payload, &sentMsg))
 	assert.Equal(t, msg, sentMsg)
 
 	assert.Equal(t, string(mockServer.sentMessages[3].Payload), "test-error")
 
 	mockServer.wg.Add(1)
-	bus.SendResponseMessage("test-service", model.Response{
+	assert.NoError(t, bus.SendResponseMessage("test-service", model.Response{
 		BrokerDestination: &model.BrokerDestinationConfig{
 			Destination:  "/user/queue/test-service",
 			ConnectionId: "con1",
 		},
 		Payload: "test-private-message",
-	}, nil)
+	}, nil))
 
 	mockServer.wg.Wait()
 
 	assert.Equal(t, len(mockServer.sentMessages), 5)
 	assert.Equal(t, mockServer.sentMessages[4].Destination, "/user/queue/test-service")
 	var sentResponse model.Response
-	json.Unmarshal(mockServer.sentMessages[4].Payload, &sentResponse)
+	assert.NoError(t, json.Unmarshal(mockServer.sentMessages[4].Payload, &sentResponse))
 	assert.Equal(t, sentResponse.Payload, "test-private-message")
 
 	mockServer.wg.Add(1)
-	bus.SendResponseMessage("test-service", &model.Response{
+	assert.NoError(t, bus.SendResponseMessage("test-service", &model.Response{
 		BrokerDestination: &model.BrokerDestinationConfig{
 			Destination:  "/user/queue/test-service",
 			ConnectionId: "con1",
 		},
 		Payload: "test-private-message-ptr",
-	}, nil)
+	}, nil))
 
 	mockServer.wg.Wait()
 
 	assert.Equal(t, len(mockServer.sentMessages), 6)
 	assert.Equal(t, mockServer.sentMessages[5].Destination, "/user/queue/test-service")
-	json.Unmarshal(mockServer.sentMessages[5].Payload, &sentResponse)
+	assert.NoError(t, json.Unmarshal(mockServer.sentMessages[5].Payload, &sentResponse))
 	assert.Equal(t, sentResponse.Payload, "test-private-message-ptr")
 }
 
@@ -260,8 +351,8 @@ func TestFabricEndpoint_UnsubscribeEvent(t *testing.T) {
 	bus.GetChannelManager().CreateChannel("test-service")
 
 	monitorWg := sync.WaitGroup{}
-	var monitorEvents []*MonitorEvent
-	bus.AddMonitorEventListener(func(monitorEvt *MonitorEvent) {
+	var monitorEvents []*ranchbus.MonitorEvent
+	bus.AddMonitorEventListener(func(monitorEvt *ranchbus.MonitorEvent) {
 		monitorEvents = append(monitorEvents, monitorEvt)
 		monitorWg.Done()
 	}, FabricEndpointUnsubscribeEvt)
@@ -275,7 +366,7 @@ func TestFabricEndpoint_UnsubscribeEvent(t *testing.T) {
 
 	mockServer.wg = &sync.WaitGroup{}
 	mockServer.wg.Add(1)
-	bus.SendResponseMessage("test-service", "test-message", nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", "test-message", nil))
 	mockServer.wg.Wait()
 	assert.Equal(t, len(mockServer.sentMessages), 1)
 
@@ -300,7 +391,7 @@ func TestFabricEndpoint_UnsubscribeEvent(t *testing.T) {
 
 	mockServer.wg = &sync.WaitGroup{}
 	mockServer.wg.Add(1)
-	bus.SendResponseMessage("test-service", "test-message", nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", "test-message", nil))
 	mockServer.wg.Wait()
 	assert.Equal(t, len(mockServer.sentMessages), 2)
 
@@ -313,7 +404,7 @@ func TestFabricEndpoint_UnsubscribeEvent(t *testing.T) {
 	assert.Equal(t, monitorEvents[1].EntityName, "test-service")
 
 	assert.Equal(t, len(fe.chanMappings), 0)
-	bus.SendResponseMessage("test-service", "test-message", nil)
+	assert.NoError(t, bus.SendResponseMessage("test-service", "test-message", nil))
 
 	// subscribe to non-existing channel
 	mockServer.subscribeHandlerFunction("con3", "sub1", "/topic/non-existing-channel", nil)

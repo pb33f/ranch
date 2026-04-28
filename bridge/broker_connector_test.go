@@ -29,7 +29,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	for {
 		mt, message, err := c.ReadMessage()
 		if err != nil {
@@ -62,7 +62,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		var bb bytes.Buffer
 		bw := bufio.NewWriter(&bb)
 		sw := frame.NewWriter(bw)
-		sw.Write(sendFrame)
+		_ = sw.Write(sendFrame)
 
 		err = c.WriteMessage(mt, bb.Bytes())
 		if err != nil {
@@ -72,7 +72,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // var srv Server
-var testBrokerAddress = ":51581"
+var testBrokerAddress = "127.0.0.1:51581"
 var httpServer *httptest.Server
 var tcpServer net.Listener
 var webSocketURLChan = make(chan string)
@@ -83,10 +83,10 @@ func runStompBroker() {
 	if err != nil {
 		log.Fatalf("failed to listen: %s", err.Error())
 	}
-	defer func() { l.Close() }()
+	defer func() { _ = l.Close() }()
 
 	log.Println("TCP listening on", l.Addr().Network(), l.Addr().String())
-	server.Serve(l)
+	_ = server.Serve(l)
 	tcpServer = l
 }
 
@@ -261,7 +261,7 @@ func TestBrokerConnector_Subscribe(t *testing.T) {
 			s, _ := c.Subscribe("/topic/test")
 			if !tc.config.UseWS {
 				var ping = func() {
-					c.SendMessage("/topic/test", "text/plain", []byte(`happy baby melody!`))
+					_ = c.SendMessage("/topic/test", "text/plain", []byte(`happy baby melody!`))
 				}
 				go ping()
 			}
@@ -273,7 +273,7 @@ func TestBrokerConnector_Subscribe(t *testing.T) {
 			s2, _ := c.Subscribe("/topic/test")
 			assert.Equal(t, s.GetId().String(), s2.GetId().String())
 
-			c.Disconnect()
+			_ = c.Disconnect()
 		})
 	}
 }
@@ -335,7 +335,7 @@ func TestBrokerConnector_SendMessageOnWs(t *testing.T) {
 	c, _ = bc.Connect(cf, true)
 	assert.NotNil(t, c)
 
-	c.Disconnect()
+	_ = c.Disconnect()
 
 	e = c.SendMessage("nowhere", "text/plain", []byte("out-there"))
 	assert.NotNil(t, e)
@@ -374,7 +374,7 @@ func TestBrokerConnector_Unsubscribe(t *testing.T) {
 			s, _ := c.Subscribe("/topic/test")
 			if !tc.config.UseWS {
 				var ping = func() {
-					c.SendMessage("/topic/test", "text/plain", []byte(`my little song`))
+					_ = c.SendMessage("/topic/test", "text/plain", []byte(`my little song`))
 				}
 				go ping()
 			}
@@ -392,7 +392,7 @@ func TestBrokerConnector_Unsubscribe(t *testing.T) {
 			err = x.Unsubscribe()
 			assert.NotNil(t, err)
 
-			c.Disconnect()
+			_ = c.Disconnect()
 		})
 	}
 }

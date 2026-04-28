@@ -4,15 +4,16 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/utils"
 	svc "github.com/pb33f/ranch/service"
+	"github.com/pb33f/ranch/transport/fabric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -67,14 +68,8 @@ func GetBasicTestServerConfig(rootDir, outLog, accessLog, errLog string, port in
 		Port:              port,
 		RestBridgeTimeout: time.Minute,
 		DebugProfilerPort: 0,
-		//LogConfig: &utils.LogConfig{
-		//	OutputLog:     outLog,
-		//	AccessLog:     accessLog,
-		//	ErrorLog:      errLog,
-		//	FormatOptions: &utils.LogFormatOption{},
-		//},
-		NoBanner:        noBanner,
-		ShutdownTimeout: time.Minute,
+		NoBanner:          noBanner,
+		ShutdownTimeout:   time.Minute,
 	}
 	return cfg
 }
@@ -92,18 +87,17 @@ func SetupPlankTestSuite(service svc.FabricService, serviceChannel string, port 
 	}
 
 	s.PlatformServer = NewPlatformServer(config)
-	if err := s.PlatformServer.RegisterService(service, serviceChannel); err != nil {
+	if err := s.RegisterService(service, serviceChannel); err != nil {
 		return nil, errors.New("cannot create printing press service, test failed")
 	}
 
 	s.Syschan = make(chan os.Signal, 1)
-	go s.PlatformServer.StartServer(s.Syschan)
+	go func() { _ = s.StartServer(context.Background(), s.Syschan) }()
 
-	s.EventBus = bus.ResetBus()
-	svc.ResetServiceRegistry()
+	s.EventBus = s.Bus()
 
 	// get a pointer to the channel manager
-	s.ChannelManager = s.EventBus.GetChannelManager()
+	s.ChannelManager = s.GetChannelManager()
 
 	// wait, service may be slow loading, rest mapping happens last.
 	wait := make(chan bool)
@@ -141,6 +135,15 @@ func RunWhenServerReady(t *testing.T, eventBus bus.EventBus, fn func(*testing.T)
 	})
 }
 
+func RunWhenPlatformServerReady(t *testing.T, ps PlatformServer, fn func(*testing.T)) {
+	select {
+	case <-ps.Ready():
+		fn(t)
+	case <-time.After(5 * time.Second):
+		assert.FailNow(t, "server did not become ready")
+	}
+}
+
 // GetTestPort returns an available port for use by Plank tests
 func GetTestPort() int {
 	minPort := 9980
@@ -174,8 +177,8 @@ func GetTestPort() int {
 func GetTestTLSCertConfig(testRootPath string) *TLSCertConfig {
 	crtFile := filepath.Join(testRootPath, "test_server.crt")
 	keyFile := filepath.Join(testRootPath, "test_server.key")
-	_ = ioutil.WriteFile(crtFile, []byte(testServerCertTmpl), 0700)
-	_ = ioutil.WriteFile(keyFile, []byte(testServerKeyTmpl), 0700)
+	_ = os.WriteFile(crtFile, []byte(testServerCertTmpl), 0600)
+	_ = os.WriteFile(keyFile, []byte(testServerKeyTmpl), 0600)
 	return &TLSCertConfig{
 		CertFile:                  crtFile,
 		KeyFile:                   keyFile,
@@ -189,7 +192,7 @@ func GetTestFabricBrokerConfig() *FabricBrokerConfig {
 		FabricEndpoint: "/ws",
 		UseTCP:         false,
 		TCPPort:        61613,
-		EndpointConfig: &bus.EndpointConfig{
+		EndpointConfig: &fabric.EndpointConfig{
 			TopicPrefix:           "/topic",
 			UserQueuePrefix:       "/queue",
 			AppRequestPrefix:      "/pub",
@@ -259,11 +262,11 @@ func CreateConfigJsonForTest() (string, error) {
 }`
 	testDir := filepath.Join(os.TempDir(), "plank-tests")
 	testFile := filepath.Join(testDir, "test-config.json")
-	err := os.MkdirAll(testDir, 0744)
+	err := os.MkdirAll(testDir, 0750)
 	if err != nil {
 		return "", err
 	}
-	err = ioutil.WriteFile(testFile, []byte(configJsonContent), 0744)
+	err = os.WriteFile(testFile, []byte(configJsonContent), 0600)
 	if err != nil {
 		return "", err
 	}

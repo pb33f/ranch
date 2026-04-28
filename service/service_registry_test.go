@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/store"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"sync"
@@ -15,12 +16,12 @@ import (
 )
 
 func newTestServiceRegistry() *serviceRegistry {
-	eventBus := bus.NewEventBusInstance()
-	return newServiceRegistry(eventBus).(*serviceRegistry)
+	eventBus := bus.NewEventBus()
+	return NewServiceRegistry(eventBus, store.NewManager(eventBus)).(*serviceRegistry)
 }
 
 func newTestServiceLifecycleManager(sr ServiceRegistry) ServiceLifecycleManager {
-	return newServiceLifecycleManager(sr)
+	return NewServiceLifecycleManager(sr)
 }
 
 type mockFabricService struct {
@@ -37,7 +38,6 @@ func (fs *mockFabricService) HandleServiceRequest(request *model.Request, core F
 
 type mockLifecycleHookEnabledService struct {
 	initChan chan bool
-	core     FabricServiceCore
 	shutdown bool
 }
 
@@ -87,11 +87,13 @@ func (fs *mockInitializableService) Init(core FabricServiceCore) error {
 func (fs *mockInitializableService) HandleServiceRequest(request *model.Request, core FabricServiceCore) {
 }
 
-func TestGetServiceRegistry(t *testing.T) {
-	sr := GetServiceRegistry()
-	sr2 := GetServiceRegistry()
+func TestNewServiceRegistry(t *testing.T) {
+	eventBus := bus.NewEventBus()
+	eventBus2 := bus.NewEventBus()
+	sr := NewServiceRegistry(eventBus, store.NewManager(eventBus))
+	sr2 := NewServiceRegistry(eventBus2, store.NewManager(eventBus2))
 	assert.NotNil(t, sr)
-	assert.Equal(t, sr, sr2)
+	assert.NotEqual(t, sr, sr2)
 }
 
 func TestServiceRegistry_RegisterService(t *testing.T) {
@@ -109,20 +111,20 @@ func TestServiceRegistry_RegisterService(t *testing.T) {
 	}
 
 	mockService.wg.Add(1)
-	registry.bus.SendRequestMessage("test-channel", req, nil)
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", req, nil))
 	mockService.wg.Wait()
 
 	assert.Equal(t, len(mockService.processedRequests), 1)
 	assert.Equal(t, *mockService.processedRequests[0], req)
 	assert.NotNil(t, mockService.core)
 
-	registry.bus.SendRequestMessage("test-channel", "invalid-request", nil)
-	registry.bus.SendRequestMessage("test-channel", nil, nil)
-	registry.bus.SendResponseMessage("test-channel", req, nil)
-	registry.bus.SendErrorMessage("test-channel", errors.New("test-error"), nil)
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", "invalid-request", nil))
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", nil, nil))
+	assert.NoError(t, registry.bus.SendResponseMessage("test-channel", req, nil))
+	assert.NoError(t, registry.bus.SendErrorMessage("test-channel", errors.New("test-error"), nil))
 
 	mockService.wg.Add(1)
-	registry.bus.SendRequestMessage("test-channel", &req, nil)
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", &req, nil))
 	mockService.wg.Wait()
 
 	assert.Equal(t, len(mockService.processedRequests), 2)
@@ -131,10 +133,10 @@ func TestServiceRegistry_RegisterService(t *testing.T) {
 
 	mockService.wg.Add(1)
 	uuid := uuid.New()
-	registry.bus.SendRequestMessage("test-channel", model.Request{
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", model.Request{
 		RequestCommand: "test-request-2",
 		Payload:        "request-payload",
-	}, &uuid)
+	}, &uuid))
 	mockService.wg.Wait()
 
 	assert.Equal(t, len(mockService.processedRequests), 3)
@@ -177,7 +179,7 @@ func TestServiceRegistry_UnregisterService(t *testing.T) {
 	}
 
 	assert.Nil(t, registry.UnregisterService("test-channel"))
-	registry.bus.SendRequestMessage("test-channel", req, nil)
+	assert.NoError(t, registry.bus.SendRequestMessage("test-channel", req, nil))
 
 	assert.Equal(t, len(mockService.processedRequests), 0)
 	assert.EqualError(t, registry.UnregisterService("test-channel"),
@@ -186,16 +188,17 @@ func TestServiceRegistry_UnregisterService(t *testing.T) {
 
 func TestServiceRegistry_SetGlobalRestServiceBaseHost(t *testing.T) {
 	registry := newTestServiceRegistry()
+	assert.Nil(t, registry.RegisterService(NewRestService(), RestServiceChannel))
 	registry.SetGlobalRestServiceBaseHost("localhost:9999")
 	assert.Equal(t, "localhost:9999",
-		registry.services[restServiceChannel].service.(*restService).baseHost)
+		registry.services[RestServiceChannel].service.(*restService).baseHost)
 }
 
 func TestServiceRegistry_GetAllServiceChannels(t *testing.T) {
 	registry := newTestServiceRegistry()
 	mockService := &mockFabricService{}
 
-	registry.RegisterService(mockService, "test-channel")
+	assert.NoError(t, registry.RegisterService(mockService, "test-channel"))
 	chans := registry.GetAllServiceChannels()
 
 	assert.Len(t, chans, 1)
@@ -205,7 +208,7 @@ func TestServiceRegistry_GetAllServiceChannels(t *testing.T) {
 func TestServiceRegistry_RegisterService_LifecycleHookEnabled(t *testing.T) {
 	svc := &mockLifecycleHookEnabledService{}
 	registry := newTestServiceRegistry()
-	registry.RegisterService(svc, "another-test-channel")
+	assert.NoError(t, registry.RegisterService(svc, "another-test-channel"))
 
 	assert.True(t, <-svc.OnServiceReady())
 

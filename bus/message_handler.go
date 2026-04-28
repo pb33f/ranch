@@ -4,7 +4,9 @@
 package bus
 
 import (
+	"context"
 	"fmt"
+
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/model"
 	"sync"
@@ -13,8 +15,12 @@ import (
 // Signature used for all functions used on bus stream APIs to Handle messages.
 type MessageHandlerFunction func(*model.Message)
 
+type MessageHandlerContextFunction func(context.Context, *model.Message)
+
 // Signature used for all functions used on bus stream APIs to Handle errors.
 type MessageErrorFunction func(error)
+
+type MessageErrorContextFunction func(context.Context, error)
 
 // MessageHandler provides access to the ID the handler is listening for from all messages
 // It also provides a Handle method that accepts a success and error function as handlers.
@@ -23,38 +29,65 @@ type MessageHandler interface {
 	GetId() *uuid.UUID
 	GetDestinationId() *uuid.UUID
 	Handle(successHandler MessageHandlerFunction, errorHandler MessageErrorFunction)
+	HandleContext(
+		ctx context.Context, successHandler MessageHandlerContextFunction, errorHandler MessageErrorContextFunction)
 	Fire() error
+	FireContext(ctx context.Context) error
 	Close()
 }
 
 type messageHandler struct {
 	id              *uuid.UUID
 	destination     *uuid.UUID
-	eventCount      int64
-	closed          bool
 	channel         *Channel
 	requestMessage  *model.Message
 	runCount        int64
 	ignoreId        bool
-	wrapperFunction MessageHandlerFunction
-	successHandler  MessageHandlerFunction
-	errorHandler    MessageErrorFunction
+	handlerContext  context.Context
+	wrapperFunction MessageHandlerContextFunction
+	successHandler  MessageHandlerContextFunction
+	errorHandler    MessageErrorContextFunction
 	subscriptionId  *uuid.UUID
 	invokeOnce      *sync.Once
 	channelManager  ChannelManager
 }
 
 func (msgHandler *messageHandler) Handle(successHandler MessageHandlerFunction, errorHandler MessageErrorFunction) {
+	var successContextHandler MessageHandlerContextFunction
+	if successHandler != nil {
+		successContextHandler = func(_ context.Context, msg *model.Message) {
+			successHandler(msg)
+		}
+	}
+	var errorContextHandler MessageErrorContextFunction
+	if errorHandler != nil {
+		errorContextHandler = func(_ context.Context, err error) {
+			errorHandler(err)
+		}
+	}
+	msgHandler.HandleContext(
+		context.Background(),
+		successContextHandler,
+		errorContextHandler,
+	)
+}
+
+func (msgHandler *messageHandler) HandleContext(
+	ctx context.Context, successHandler MessageHandlerContextFunction, errorHandler MessageErrorContextFunction) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	msgHandler.handlerContext = ctx
 	msgHandler.successHandler = successHandler
 	msgHandler.errorHandler = errorHandler
 
-	msgHandler.subscriptionId, _ = msgHandler.channelManager.SubscribeChannelHandler(
+	msgHandler.subscriptionId, _ = msgHandler.channelManager.SubscribeChannelHandlerContext(
 		msgHandler.channel.Name, msgHandler.wrapperFunction, false)
 }
 
 func (msgHandler *messageHandler) Close() {
 	if msgHandler.subscriptionId != nil {
-		msgHandler.channelManager.UnsubscribeChannelHandler(
+		_ = msgHandler.channelManager.UnsubscribeChannelHandler(
 			msgHandler.channel.Name, msgHandler.subscriptionId)
 	}
 }
@@ -68,11 +101,20 @@ func (msgHandler *messageHandler) GetDestinationId() *uuid.UUID {
 }
 
 func (msgHandler *messageHandler) Fire() error {
+	return msgHandler.FireContext(context.Background())
+}
+
+func (msgHandler *messageHandler) FireContext(ctx context.Context) error {
 	if msgHandler.requestMessage != nil {
-		sendMessageToChannel(msgHandler.channel, msgHandler.requestMessage)
-		msgHandler.channel.wg.Wait()
-		return nil
-	} else {
-		return fmt.Errorf("nothing to fire, request is empty")
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		start := msgHandler.channel.activity.watermark()
+		msgHandler.channel.dispatchContext(ctx, msgHandler.requestMessage)
+		return msgHandler.channel.activity.waitQuiescentAfter(ctx, start)
 	}
+	return fmt.Errorf("nothing to fire, request is empty")
 }

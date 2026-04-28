@@ -40,7 +40,7 @@ func checkConfig(config *BrokerConnectorConfig) error {
 	// cognitive load to using the client with just the basics.
 	if config.WebSocketConfig != nil && config.WebSocketConfig.UseTLS && config.WebSocketConfig.TLSConfig == nil {
 		var basicTLSConfig = &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, // #nosec G402 -- caller opted into default client TLS for local/self-signed brokers.
 			MinVersion:         tls.VersionTLS12,
 			CipherSuites: []uint16{
 				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
@@ -67,10 +67,10 @@ func (bc *brokerConnector) Connect(config *BrokerConnectorConfig, enableLogging 
 		return bc.connectWs(config, enableLogging)
 	}
 
-	return bc.connectTCP(config, err)
+	return bc.connectTCP(config)
 }
 
-func (bc *brokerConnector) connectTCP(config *BrokerConnectorConfig, err error) (Connection, error) {
+func (bc *brokerConnector) connectTCP(config *BrokerConnectorConfig) (Connection, error) {
 	if config.HostHeader == "" {
 		config.HostHeader = "/"
 	}

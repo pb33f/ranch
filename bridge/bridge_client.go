@@ -118,7 +118,7 @@ func (ws *BridgeClient) Connect(url *url.URL, config *BrokerConnectorConfig) err
 // Disconnect from broker endpoint
 func (ws *BridgeClient) Disconnect() error {
 	if ws.WSc != nil {
-		defer ws.WSc.Close()
+		defer func() { _ = ws.WSc.Close() }()
 		ws.disconnectedChan <- true
 	} else {
 		return fmt.Errorf("cannot disconnect, no connection defined")
@@ -146,27 +146,22 @@ func (ws *BridgeClient) Subscribe(destination string) *BridgeClientSub {
 		frame.Destination, destination,
 		frame.Ack, stomp.AckAuto.String())
 
-	// send subscription frame.
 	ws.SendFrame(subscribeFrame)
 	return s
 }
 
-// Send a payload to a destination
 func (ws *BridgeClient) Send(destination, contentType string, payload []byte, opts ...func(fr *frame.Frame) error) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()
 
-	// create send frame.
 	sendFrame := frame.New(frame.SEND,
 		frame.Destination, destination,
 		frame.ContentLength, strconv.Itoa(len(payload)),
 		frame.ContentType, contentType)
 
-	// apply extra frame options such as adding extra headers
 	for _, frameOpt := range opts {
 		_ = frameOpt(sendFrame)
 	}
-	// add payload
 	sendFrame.Body = payload
 
 	// send frame
@@ -183,11 +178,14 @@ func (ws *BridgeClient) SendFrame(f *frame.Frame) {
 	sw := frame.NewWriter(br)
 
 	// write frame to buffer
-	sw.Write(f)
-	w, _ := ws.WSc.NextWriter(websocket.TextMessage)
-	defer w.Close()
+	_ = sw.Write(f)
+	w, err := ws.WSc.NextWriter(websocket.TextMessage)
+	if err != nil {
+		return
+	}
+	defer func() { _ = w.Close() }()
 
-	w.Write(b.Bytes())
+	_, _ = w.Write(b.Bytes())
 
 }
 
@@ -251,7 +249,7 @@ func (ws *BridgeClient) handleIncomingSTOMPFrames() {
 	}
 }
 
-func (ws *BridgeClient) sendResponseSafe(C chan *model.Message, m *model.Message) {
+func (ws *BridgeClient) sendResponseSafe(c chan *model.Message, m *model.Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ws.logger != nil {
@@ -259,5 +257,5 @@ func (ws *BridgeClient) sendResponseSafe(C chan *model.Message, m *model.Message
 			}
 		}
 	}()
-	C <- m
+	c <- m
 }

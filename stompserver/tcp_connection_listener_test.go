@@ -55,7 +55,7 @@ func TestTcpConnectionListener_Accept(t *testing.T) {
 
 	go func() {
 		wr := frame.NewWriter(clientConn)
-		wr.Write(frame.New(frame.CONNECT, frame.AcceptVersion, "1.2"))
+		_ = wr.Write(frame.New(frame.CONNECT, frame.AcceptVersion, "1.2"))
 	}()
 
 	f, readErr := rawCon.ReadFrame()
@@ -65,7 +65,7 @@ func TestTcpConnectionListener_Accept(t *testing.T) {
 
 	frameReader := frame.NewReader(clientConn)
 
-	go rawCon.WriteFrame(frame.New(frame.CONNECTED, frame.Version, "1.2"))
+	go func() { _ = rawCon.WriteFrame(frame.New(frame.CONNECTED, frame.Version, "1.2")) }()
 
 	serverFrame, writeErr := frameReader.Read()
 	assert.NotNil(t, serverFrame)

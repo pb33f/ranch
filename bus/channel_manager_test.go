@@ -79,7 +79,7 @@ func TestChannelManager_SubscribeChannelHandler(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotNil(t, uuid)
 	channel, _ := testChannelManager.GetChannel(testChannelManagerChannelName)
-	assert.Len(t, channel.eventHandlers, 1)
+	assert.Len(t, channel.handlersSnapshot(), 1)
 }
 
 func TestChannelManager_SubscribeChannelHandlerMissingChannel(t *testing.T) {
@@ -96,11 +96,11 @@ func TestChannelManager_UnsubscribeChannelHandler(t *testing.T) {
 	handler := func(*model.Message) {}
 	uuid, _ := testChannelManager.SubscribeChannelHandler(testChannelManagerChannelName, handler, false)
 	channel, _ := testChannelManager.GetChannel(testChannelManagerChannelName)
-	assert.Len(t, channel.eventHandlers, 1)
+	assert.Len(t, channel.handlersSnapshot(), 1)
 
 	err := testChannelManager.UnsubscribeChannelHandler(testChannelManagerChannelName, uuid)
 	assert.Nil(t, err)
-	assert.Len(t, channel.eventHandlers, 0)
+	assert.Len(t, channel.handlersSnapshot(), 0)
 }
 
 func TestChannelManager_UnsubscribeChannelHandlerMissingChannel(t *testing.T) {
@@ -115,13 +115,14 @@ func TestChannelManager_UnsubscribeChannelHandlerNoId(t *testing.T) {
 	testChannelManager.CreateChannel(testChannelManagerChannelName)
 
 	handler := func(*model.Message) {}
-	testChannelManager.SubscribeChannelHandler(testChannelManagerChannelName, handler, false)
+	_, err := testChannelManager.SubscribeChannelHandler(testChannelManagerChannelName, handler, false)
+	assert.NoError(t, err)
 	channel, _ := testChannelManager.GetChannel(testChannelManagerChannelName)
-	assert.Len(t, channel.eventHandlers, 1)
+	assert.Len(t, channel.handlersSnapshot(), 1)
 	id := uuid.New()
-	err := testChannelManager.UnsubscribeChannelHandler(testChannelManagerChannelName, &id)
+	err = testChannelManager.UnsubscribeChannelHandler(testChannelManagerChannelName, &id)
 	assert.NotNil(t, err)
-	assert.Len(t, channel.eventHandlers, 1)
+	assert.Len(t, channel.handlersSnapshot(), 1)
 }
 
 func TestChannelManager_TestWaitForGroupOnBadChannel(t *testing.T) {
@@ -159,7 +160,7 @@ func TestChannelManager_TestGalacticChannelOpen(t *testing.T) {
 	assert.Equal(t, galacticChannel.brokerSubs[0].s, sub)
 	assert.Equal(t, galacticChannel.brokerSubs[0].c, c)
 
-	testChannelManager.MarkChannelAsLocal(testChannelManagerChannelName)
+	assert.NoError(t, testChannelManager.MarkChannelAsLocal(testChannelManagerChannelName))
 	assert.False(t, galacticChannel.galactic)
 
 	assert.Equal(t, len(galacticChannel.brokerConns), 0)
@@ -215,8 +216,8 @@ func TestChannelManager_TestListenToMonitorGalactic(t *testing.T) {
 
 		})
 
-	testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon)
-	testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon) // double up for fun
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon))
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon)) // double up for fun
 	<-c.brokerMappedEvent
 	assert.Len(t, c.brokerConns, 1)
 	mockSub.GetMsgChannel() <- &model.Message{Payload: "test-message", Direction: model.ResponseDir}
@@ -236,6 +237,7 @@ func TestChannelManager_TestListenToMonitorGalactic(t *testing.T) {
 	mockCon2.On("Subscribe", "/queue/hiya").Return(mockSub2, nil).Once()
 
 	h, e = b.ListenOnce(myChan)
+	assert.NoError(t, e)
 
 	h.Handle(
 		func(msg *model.Message) {
@@ -244,8 +246,8 @@ func TestChannelManager_TestListenToMonitorGalactic(t *testing.T) {
 		},
 		func(err error) {})
 
-	testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon2)
-	testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon2) // trigger double (should ignore)
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon2))
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(myChan, "/queue/hiya", mockCon2)) // trigger double (should ignore)
 
 	select {
 	case <-c.brokerMappedEvent:
@@ -282,11 +284,11 @@ func TestChannelManager_TestListenToMonitorLocal(t *testing.T) {
 	mockCon := &MockBridgeConnection{Id: &id}
 	mockCon.On("Subscribe", "/queue/seeya").Return(sub, nil).Once()
 
-	testChannelManager.MarkChannelAsGalactic(myChan, "/queue/seeya", mockCon)
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(myChan, "/queue/seeya", mockCon))
 	<-c.brokerMappedEvent
 	assert.Len(t, c.brokerConns, 1)
 
-	testChannelManager.MarkChannelAsLocal(myChan)
+	assert.NoError(t, testChannelManager.MarkChannelAsLocal(myChan))
 	<-c.brokerMappedEvent
 	assert.Len(t, c.brokerConns, 0)
 	assert.Len(t, c.brokerSubs, 0)

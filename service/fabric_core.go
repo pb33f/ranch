@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"log/slog"
 )
 
 // FabricServiceCore is the interface providing base functionality to fabric services.
@@ -17,7 +18,7 @@ type FabricServiceCore interface {
 
 	// SendResponse Uses the "responsePayload" and "request" params to build and send model.Response object
 	// on the service channel.
-	SendResponse(request *model.Request, responsePayload interface{})
+	SendResponse(request *model.Request, responsePayload any)
 
 	// SendResponseAsString Uses the "responsePayload" and "request" params to build and send model.Response object
 	// on the service channel. The payload is not marshalled to JSON, but sent as a string.
@@ -29,17 +30,17 @@ type FabricServiceCore interface {
 
 	// SendResponseWithHeaders is the same as SendResponse, but include headers. Useful for HTTP REST interfaces - these headers will be
 	// set as HTTP response headers. Great for custom mime-types, binary stuff and more.
-	SendResponseWithHeaders(request *model.Request, responsePayload interface{}, headers map[string]any)
+	SendResponseWithHeaders(request *model.Request, responsePayload any, headers map[string]any)
 
 	// SendResponseWithHeadersAndCode is the same as SendResponseWithHeaders, but inclides a custom HTTP status code.
-	SendResponseWithHeadersAndCode(request *model.Request, responsePayload interface{}, headers map[string]any, code int)
+	SendResponseWithHeadersAndCode(request *model.Request, responsePayload any, headers map[string]any, code int)
 
 	// SendErrorResponse builds an error model.Response object and sends it on the service channel as response to the "request" param.
 	SendErrorResponse(request *model.Request, responseErrorCode int, responseErrorMessage string)
 
 	// SendErrorResponseWithPayload is the same as SendErrorResponse, but adds a payload
 	SendErrorResponseWithPayload(request *model.Request, responseErrorCode int, responseErrorMessage string,
-		payload interface{})
+		payload any)
 
 	// SendErrorResponseWithHeaders is the same as SendErrorResponse, but adds headers as well.
 	SendErrorResponseWithHeaders(request *model.Request, responseErrorCode int, responseErrorMessage string,
@@ -51,7 +52,7 @@ type FabricServiceCore interface {
 
 	// SendErrorResponseWithHeadersAndPayload is the same as SendErrorResponseWithPayload, but adds headers as well.
 	SendErrorResponseWithHeadersAndPayload(request *model.Request, responseErrorCode int, responseErrorMessage string,
-		payload interface{}, headers map[string]any)
+		payload any, headers map[string]any)
 
 	// HandleUnknownRequest handles unknown/unsupported/un-implemented requests,
 	HandleUnknownRequest(request *model.Request)
@@ -76,13 +77,21 @@ type fabricCore struct {
 	channelName string
 	bus         bus.EventBus
 	headers     map[string]string
+	logger      *slog.Logger
 }
 
 func (core *fabricCore) Bus() bus.EventBus {
 	return core.bus
 }
 
-func (core *fabricCore) SendResponse(request *model.Request, responsePayload interface{}) {
+func (core *fabricCore) log() *slog.Logger {
+	if core.logger == nil {
+		return slog.Default()
+	}
+	return core.logger
+}
+
+func (core *fabricCore) SendResponse(request *model.Request, responsePayload any) {
 
 	headers := core.mergeHeadersWithDefaults(nil)
 
@@ -94,7 +103,7 @@ func (core *fabricCore) SendResponse(request *model.Request, responsePayload int
 		Marshal:           true,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendResponseAsStringWithHeaders(request *model.Request, responsePayload string, headers map[string]any) {
@@ -109,7 +118,7 @@ func (core *fabricCore) SendResponseAsStringWithHeaders(request *model.Request, 
 		Marshal:           false,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendResponseAsString(request *model.Request, responsePayload string) {
@@ -124,10 +133,10 @@ func (core *fabricCore) SendResponseAsString(request *model.Request, responsePay
 		Marshal:           false,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
-func (core *fabricCore) SendResponseWithHeaders(request *model.Request, responsePayload interface{}, headers map[string]any) {
+func (core *fabricCore) SendResponseWithHeaders(request *model.Request, responsePayload any, headers map[string]any) {
 
 	headers = core.mergeHeadersWithDefaults(headers)
 
@@ -139,10 +148,10 @@ func (core *fabricCore) SendResponseWithHeaders(request *model.Request, response
 		BrokerDestination: request.BrokerDestination,
 		Headers:           headers,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
-func (core *fabricCore) SendResponseWithHeadersAndCode(request *model.Request, responsePayload interface{}, headers map[string]any, code int) {
+func (core *fabricCore) SendResponseWithHeadersAndCode(request *model.Request, responsePayload any, headers map[string]any, code int) {
 
 	headers = core.mergeHeadersWithDefaults(headers)
 
@@ -155,7 +164,7 @@ func (core *fabricCore) SendResponseWithHeadersAndCode(request *model.Request, r
 		Headers:           headers,
 		HttpStatusCode:    code,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendErrorResponse(
@@ -165,7 +174,7 @@ func (core *fabricCore) SendErrorResponse(
 
 func (core *fabricCore) SendErrorResponseWithPayload(
 	request *model.Request,
-	responseErrorCode int, responseErrorMessage string, payload interface{}) {
+	responseErrorCode int, responseErrorMessage string, payload any) {
 
 	headers := core.mergeHeadersWithDefaults(nil)
 
@@ -180,7 +189,7 @@ func (core *fabricCore) SendErrorResponseWithPayload(
 		ErrorMessage:      responseErrorMessage,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendErrorResponseWithHeaders(
@@ -199,12 +208,12 @@ func (core *fabricCore) SendErrorResponseWithHeaders(
 		ErrorMessage:      responseErrorMessage,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendErrorResponseWithHeadersAndPayload(
 	request *model.Request,
-	responseErrorCode int, responseErrorMessage string, payload interface{}, headers map[string]any) {
+	responseErrorCode int, responseErrorMessage string, payload any, headers map[string]any) {
 
 	headers = core.mergeHeadersWithDefaults(headers)
 
@@ -219,7 +228,7 @@ func (core *fabricCore) SendErrorResponseWithHeadersAndPayload(
 		ErrorMessage:      responseErrorMessage,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) SendErrorResponseAsStringWithHeadersAndPayload(
@@ -239,7 +248,7 @@ func (core *fabricCore) SendErrorResponseAsStringWithHeadersAndPayload(
 		ErrorMessage:      responseErrorMessage,
 		BrokerDestination: request.BrokerDestination,
 	}
-	core.bus.SendResponseMessage(core.channelName, response, request.Id)
+	core.sendResponseMessage(response, request.Id)
 }
 
 func (core *fabricCore) HandleUnknownRequest(request *model.Request) {
@@ -267,10 +276,8 @@ func (core *fabricCore) mergeHeadersWithDefaults(headers map[string]any) map[str
 	for k, v := range core.headers {
 		mergedHeaders[k] = v
 	}
-	if headers != nil {
-		for k, v := range headers {
-			mergedHeaders[k] = v
-		}
+	for k, v := range headers {
+		mergedHeaders[k] = v
 	}
 	return mergedHeaders
 }
@@ -294,7 +301,7 @@ func (core *fabricCore) RestServiceRequest(restRequest *RestServiceRequest,
 		Id:      &id,
 		Payload: restRequest,
 	}
-	mh, _ := core.bus.ListenOnceForDestination(restServiceChannel, request.Id)
+	mh, _ := core.bus.ListenOnceForDestination(RestServiceChannel, request.Id)
 	mh.Handle(func(message *model.Message) {
 		response := message.Payload.(*model.Response)
 		if response.Error {
@@ -309,5 +316,13 @@ func (core *fabricCore) RestServiceRequest(restRequest *RestServiceRequest,
 			ErrorCode:    500,
 		})
 	})
-	core.bus.SendRequestMessage(restServiceChannel, request, request.Id)
+	if err := core.bus.SendRequestMessage(RestServiceChannel, request, request.Id); err != nil {
+		core.log().Warn("failed to send REST service request", "err", err, "channel", RestServiceChannel)
+	}
+}
+
+func (core *fabricCore) sendResponseMessage(response *model.Response, destinationId *uuid.UUID) {
+	if err := core.bus.SendResponseMessage(core.channelName, response, destinationId); err != nil {
+		core.log().Warn("failed to send fabric response", "err", err, "channel", core.channelName)
+	}
 }

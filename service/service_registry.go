@@ -4,12 +4,15 @@
 package service
 
 import (
+	"context"
 	"fmt"
-	"github.com/pb33f/ranch/bus"
-	"github.com/pb33f/ranch/model"
-	"log"
+	"log/slog"
 	"reflect"
 	"sync"
+
+	"github.com/pb33f/ranch/bus"
+	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/store"
 )
 
 var internalServices = map[string]bool{
@@ -49,48 +52,40 @@ type serviceRegistry struct {
 	lock             sync.Mutex
 	services         map[string]*fabricServiceWrapper
 	bus              bus.EventBus
-	lifecycleManager *serviceLifecycleManager
+	storeManager     store.Manager
+	lifecycleManager ServiceLifecycleManager
+	logger           *slog.Logger
 }
 
-var once sync.Once
-var registry ServiceRegistry
-
-// ResetServiceRegistry destroys existing service registry instance and creates a new one
-func ResetServiceRegistry() ServiceRegistry {
-	once = sync.Once{}
-	return GetServiceRegistry()
+func NewServiceRegistry(eventBus bus.EventBus, storeManager store.Manager) ServiceRegistry {
+	return NewServiceRegistryWithLogger(eventBus, storeManager, nil)
 }
 
-func GetServiceRegistry() ServiceRegistry {
-	once.Do(func() {
-		registry = newServiceRegistry(bus.GetBus())
-
-		// ensure a new service lifecycle manager is initialized as early as possible
-		svcLifecycleManagerInstance = nil
-		GetServiceLifecycleManager()
-	})
-	return registry
-}
-
-func newServiceRegistry(bus bus.EventBus) ServiceRegistry {
-	registry := &serviceRegistry{
-		bus:      bus,
-		services: make(map[string]*fabricServiceWrapper),
+func NewServiceRegistryWithLogger(eventBus bus.EventBus, storeManager store.Manager, logger *slog.Logger) ServiceRegistry {
+	if logger == nil {
+		logger = slog.Default()
 	}
+	registry := &serviceRegistry{
+		bus:          eventBus,
+		storeManager: storeManager,
+		services:     make(map[string]*fabricServiceWrapper),
+		logger:       logger,
+	}
+	registry.lifecycleManager = NewServiceLifecycleManager(registry)
 	// create a channel for service lifecycle manager
-	_ = bus.GetChannelManager().CreateChannel(LifecycleManagerChannelName)
+	_ = eventBus.GetChannelManager().CreateChannel(LifecycleManagerChannelName)
 
 	// create a bus store for delivering service ready notifications
-	bus.GetStoreManager().CreateStoreWithType(ServiceReadyStore, reflect.TypeOf(true)).Initialize()
+	storeManager.CreateStoreWithType(ServiceReadyStore, reflect.TypeOf(true)).Initialize()
 
-	// auto-register the restService
-	registry.RegisterService(&restService{}, restServiceChannel)
 	return registry
 }
 
 // GetService returns the FabricService instance registered at the provided service channel name.
 // if no service is found at the service channel it returns an error.
 func (r *serviceRegistry) GetService(serviceChannelName string) (FabricService, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	if serviceWrapper, ok := r.services[serviceChannelName]; ok {
 		return serviceWrapper.service, nil
 	}
@@ -98,13 +93,21 @@ func (r *serviceRegistry) GetService(serviceChannelName string) (FabricService, 
 }
 
 func (r *serviceRegistry) SetGlobalRestServiceBaseHost(host string) {
-	r.services[restServiceChannel].service.(*restService).setBaseHost(host)
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if svc, ok := r.services[RestServiceChannel]; ok {
+		if rest, ok := svc.service.(*restService); ok {
+			rest.setBaseHost(host)
+		}
+	}
 }
 
 // GetAllServiceChannels returns the list of service channels that are registered with the registry
 func (r *serviceRegistry) GetAllServiceChannels() []string {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	services := make([]string, 0)
-	for chanName, _ := range r.services {
+	for chanName := range r.services {
 		// do not return internal services like fabric-rest
 		if isInternal, found := internalServices[chanName]; !isInternal || !found {
 			services = append(services, chanName)
@@ -115,48 +118,46 @@ func (r *serviceRegistry) GetAllServiceChannels() []string {
 
 func (r *serviceRegistry) RegisterService(service FabricService, serviceChannelName string) error {
 	r.lock.Lock()
-	defer r.lock.Unlock()
 
 	if service == nil {
+		r.lock.Unlock()
 		return fmt.Errorf("unable to register service: nil service")
 	}
 
 	if _, ok := r.services[serviceChannelName]; ok {
+		r.lock.Unlock()
 		return fmt.Errorf("unable to register service: service channel name is already used: %s", serviceChannelName)
 	}
 
-	sw := newServiceWrapper(r.bus, service, serviceChannelName)
+	sw := newServiceWrapper(r.bus, service, serviceChannelName, r.logger)
 	err := sw.init()
 	if err != nil {
+		r.lock.Unlock()
 		return err
 	}
 
 	r.services[serviceChannelName] = sw
 
 	// if the service is an internal service like fabric-rest don't bother setting up lifecycle hooks
-	if isInternal, _ := internalServices[serviceChannelName]; isInternal {
+	if internalServices[serviceChannelName] {
+		r.lock.Unlock()
 		return nil
 	}
+	r.lock.Unlock()
 
 	// see if the service implements ServiceLifecycleHookEnabled interface and set up REST bridges as configured
 	var hooks RESTBridgeEnabled
-	lcm := GetServiceLifecycleManager()
-
-	// NOTE: this condition is only to be used when unit testing where each test case
-	// creates a new instance of ServiceRegistry and ServiceLifecycleManager by utility functions.
-	// in such cases GetServiceHooks() is not able to locate the proper test instances of those
-	// structs so manual wiring is needed here. again, this would / should never be used in production
-	// hence a private struct property.
-	if r.lifecycleManager != nil {
-		lcm = r.lifecycleManager
+	lcm := r.lifecycleManager
+	if lcm == nil {
+		lcm = NewServiceLifecycleManager(r)
 	}
 
 	// hand off registering REST bridges to Plank via bus messages
 	if hooks = lcm.GetRESTBridgeEnabledService(serviceChannelName); hooks != nil {
-		if err = bus.GetBus().SendResponseMessage(
+		if err = r.bus.SendResponseMessage(
 			LifecycleManagerChannelName,
 			&SetupRESTBridgeRequest{ServiceChannel: serviceChannelName, Config: hooks.GetRESTBridgeConfig()},
-			bus.GetBus().GetId()); err != nil {
+			r.bus.GetId()); err != nil {
 			return err
 		}
 	}
@@ -183,13 +184,14 @@ type fabricServiceWrapper struct {
 }
 
 func newServiceWrapper(
-	bus bus.EventBus, service FabricService, serviceChannelName string) *fabricServiceWrapper {
+	bus bus.EventBus, service FabricService, serviceChannelName string, logger *slog.Logger) *fabricServiceWrapper {
 
 	return &fabricServiceWrapper{
 		service: service,
 		fabricCore: &fabricCore{
 			bus:         bus,
 			channelName: serviceChannelName,
+			logger:      logger,
 		},
 	}
 }
@@ -211,13 +213,17 @@ func (sw *fabricServiceWrapper) init() error {
 	}
 
 	sw.requestMsgHandler = mh
-	mh.Handle(
-		func(message *model.Message) {
+	mh.HandleContext(
+		context.Background(),
+		func(ctx context.Context, message *model.Message) {
 			requestPtr, ok := message.Payload.(*model.Request)
 			if !ok {
 				request, ok := message.Payload.(model.Request)
 				if !ok {
-					log.Println("cannot cast service request payload to model.Request")
+					sw.fabricCore.log().Warn(
+						"cannot cast service request payload to model.Request",
+						"payloadType", fmt.Sprintf("%T", message.Payload),
+						"channel", sw.fabricCore.channelName)
 					return
 				}
 				requestPtr = &request
@@ -227,9 +233,13 @@ func (sw *fabricServiceWrapper) init() error {
 				requestPtr.Id = message.DestinationId
 			}
 
+			if contextService, ok := sw.service.(ContextFabricService); ok {
+				contextService.HandleServiceRequestContext(ctx, requestPtr, sw.fabricCore)
+				return
+			}
 			sw.service.HandleServiceRequest(requestPtr, sw.fabricCore)
 		},
-		func(e error) {})
+		func(context.Context, error) {})
 
 	return nil
 }

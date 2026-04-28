@@ -12,7 +12,7 @@ import (
 	"github.com/go-stomp/stomp/v3/frame"
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/model"
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -205,7 +205,7 @@ func (c *connection) subscribeTCPUsingReplyDestination(destination string) (Subs
 func (c *connection) listenTCPFrames(src chan *stomp.Message, dst chan *model.Message) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("subscription is closed, message undeliverable to closed channel.")
+			slog.Default().Warn("subscription is closed, message undeliverable to closed channel")
 		}
 	}()
 	for {
@@ -250,13 +250,17 @@ func (c *connection) SendMessageWithReplyDestination(destination string, replyDe
 
 // SendMessage will send a []byte payload to a destination.
 func (c *connection) SendMessage(destination string, contentType string, payload []byte, opts ...func(*frame.Frame) error) error {
+	if c == nil {
+		return fmt.Errorf("cannot send message, no connection")
+	}
+
 	c.connLock.Lock()
 	defer c.connLock.Unlock()
-	if c != nil && !c.useWs && c.conn != nil {
-		c.conn.Send(destination, contentType, payload, opts...)
+	if !c.useWs && c.conn != nil {
+		_ = c.conn.Send(destination, contentType, payload, opts...)
 		return nil
 	}
-	if c != nil && c.useWs && c.wsConn != nil {
+	if c.useWs && c.wsConn != nil {
 		c.wsConn.Send(destination, contentType, payload, opts...)
 		return nil
 	}

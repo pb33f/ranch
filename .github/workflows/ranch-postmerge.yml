@@ -22,28 +22,19 @@ jobs:
         run: go mod download
 
       - name: Test
-        run: go test ./... -coverprofile=cover.out
-
-      - name: Race detector baseline
-        continue-on-error: true
-        run: go test ./... -race
+        run: go test ./... -race -coverprofile=cover.out
 
       - name: Vet
         run: go vet ./...
 
-      - name: Lint baseline
+      - name: Lint
         uses: golangci/golangci-lint-action@v6
-        continue-on-error: true
         with:
-          args: --timeout=5m
-
-      - name: Gosec baseline
-        continue-on-error: true
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec ./...
+          version: v2.11.4
+          args: --timeout=5m ./...
 
       - name: Upload coverage
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

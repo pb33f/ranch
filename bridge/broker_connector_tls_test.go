@@ -22,7 +22,7 @@ var websocketURLTLS string
 
 // var srv Server
 var testTLS = &tls.Config{
-	InsecureSkipVerify: true,
+	InsecureSkipVerify: true, // #nosec G402 -- test client uses a self-signed certificate.
 	MinVersion:         tls.VersionTLS12,
 	CipherSuites: []uint16{
 		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
@@ -42,14 +42,14 @@ func runWebSocketEndPointTLS() {
 }
 
 func runStompBrokerTLS() {
-	l, err := net.Listen("tcp", ":51582")
+	l, err := net.Listen("tcp", "127.0.0.1:51582")
 	if err != nil {
 		log.Fatalf("failed to listen: %s", err.Error())
 	}
-	defer func() { l.Close() }()
+	defer func() { _ = l.Close() }()
 
 	log.Println("TCP listening on", l.Addr().Network(), l.Addr().String(), "(TLS)")
-	server.Serve(l)
+	_ = server.Serve(l)
 	tcpServer = l
 }
 
@@ -134,14 +134,15 @@ func TestBrokerConnector_ConnectBroker_TLS(t *testing.T) {
 			}
 
 			m, _ := c.Subscribe("/topic/test-topic")
+			sendErr := make(chan error, 1)
 			go func() {
-				err = c.SendJSONMessage("/topic/test-topic", []byte("{}"), func(frame *frame.Frame) error {
+				sendErr <- c.SendJSONMessage("/topic/test-topic", []byte("{}"), func(frame *frame.Frame) error {
 					frame.Header.Set("access-token", "test")
 					return nil
 				})
-				assert.Nil(t, err)
 			}()
 			msg := <-m.GetMsgChannel()
+			assert.Nil(t, <-sendErr)
 			b := msg.Payload.([]byte)
 			assert.EqualValues(t, "happy baby melody!", string(b))
 
