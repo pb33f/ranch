@@ -1,11 +1,14 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
 	"github.com/google/uuid"
+	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/transport/fabric"
+	"log/slog"
 	"strings"
 	"sync"
 )
@@ -19,7 +22,9 @@ const (
 )
 
 type storeSyncService struct {
-	bus                EventBus
+	bus                bus.EventBus
+	manager            Manager
+	logger             *slog.Logger
 	lock               sync.Mutex
 	syncClients        map[string]*syncClientChannel
 	syncStoreListeners map[string]*syncStoreListener
@@ -28,18 +33,24 @@ type storeSyncService struct {
 type syncStoreListener struct {
 	storeStream        StoreStream
 	clientSyncChannels map[string]bool
+	logger             *slog.Logger
 	lock               sync.RWMutex
 }
 
 type syncClientChannel struct {
 	channelName           string
-	clientRequestListener MessageHandler
+	clientRequestListener bus.MessageHandler
 	openStores            map[string]bool
 }
 
-func newStoreSyncService(bus EventBus) *storeSyncService {
+func newStoreSyncService(eventBus bus.EventBus, manager Manager, logger *slog.Logger) *storeSyncService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	syncService := &storeSyncService{
-		bus:                bus,
+		bus:                eventBus,
+		manager:            manager,
+		logger:             logger,
 		syncClients:        make(map[string]*syncClientChannel),
 		syncStoreListeners: make(map[string]*syncStoreListener),
 	}
@@ -47,22 +58,29 @@ func newStoreSyncService(bus EventBus) *storeSyncService {
 	return syncService
 }
 
+func (syncService *storeSyncService) log() *slog.Logger {
+	if syncService.logger == nil {
+		return slog.Default()
+	}
+	return syncService.logger
+}
+
 func (syncService *storeSyncService) init() {
 	syncService.bus.AddMonitorEventListener(
-		func(monitorEvt *MonitorEvent) {
+		func(monitorEvt *bus.MonitorEvent) {
 			if !strings.HasPrefix(monitorEvt.EntityName, "transport-store-sync.") {
 				// not a store sync channel, ignore the message
 				return
 			}
 
 			switch monitorEvt.EventType {
-			case FabricEndpointSubscribeEvt:
+			case fabric.FabricEndpointSubscribeEvt:
 				syncService.openNewClientSyncChannel(monitorEvt.EntityName)
-			case ChannelDestroyedEvt:
+			case bus.ChannelDestroyedEvt:
 				syncService.closeClientSyncChannel(monitorEvt.EntityName)
 			}
 		},
-		FabricEndpointSubscribeEvt, ChannelDestroyedEvt)
+		fabric.FabricEndpointSubscribeEvt, bus.ChannelDestroyedEvt)
 }
 
 func (syncService *storeSyncService) openNewClientSyncChannel(channelName string) {
@@ -86,8 +104,8 @@ func (syncService *storeSyncService) openNewClientSyncChannel(channelName string
 				if !reqOk || request.Payload == nil {
 					return
 				}
-				var storeRequest map[string]interface{}
-				storeRequest, ok := request.Payload.(map[string]interface{})
+				var storeRequest map[string]any
+				storeRequest, ok := request.Payload.(map[string]any)
 				if !ok {
 					return
 				}
@@ -130,15 +148,15 @@ func (syncService *storeSyncService) closeClientSyncChannel(channelName string) 
 }
 
 func (syncService *storeSyncService) openStore(
-	syncClient *syncClientChannel, request map[string]interface{}, reqId *uuid.UUID) {
+	syncClient *syncClientChannel, request map[string]any, reqId *uuid.UUID) {
 
-	storeId, ok := getStingProperty("storeId", request)
+	storeId, ok := getStringProperty("storeId", request)
 	if !ok || storeId == "" {
 		syncService.sendErrorResponse(syncClient.channelName, "Invalid OpenStoreRequest", reqId)
 		return
 	}
 
-	store := syncService.bus.GetStoreManager().GetStore(storeId)
+	store := syncService.manager.GetStore(storeId)
 	if store == nil {
 		syncService.sendErrorResponse(
 			syncClient.channelName, "Cannot open non-existing store: "+storeId, reqId)
@@ -152,7 +170,7 @@ func (syncService *storeSyncService) openStore(
 
 	storeListener, ok := syncService.syncStoreListeners[storeId]
 	if !ok {
-		storeListener = newSyncStoreListener(syncService.bus, store)
+		storeListener = newSyncStoreListener(syncService.bus, store, syncService.logger)
 		syncService.syncStoreListeners[storeId] = storeListener
 	}
 	storeListener.addChannel(syncClient.channelName)
@@ -160,15 +178,17 @@ func (syncService *storeSyncService) openStore(
 	store.WhenReady(func() {
 		items, version := store.AllValuesAndVersion()
 
-		syncService.bus.SendResponseMessage(syncClient.channelName,
-			model.NewStoreContentResponse(storeId, items, version), nil)
+		if err := syncService.bus.SendResponseMessage(syncClient.channelName,
+			NewStoreContentResponse(storeId, items, version), nil); err != nil {
+			syncService.log().Warn("failed to send store content response", "err", err, "channel", syncClient.channelName)
+		}
 	})
 }
 
 func (syncService *storeSyncService) closeStore(
-	syncClient *syncClientChannel, request map[string]interface{}, reqId *uuid.UUID) {
+	syncClient *syncClientChannel, request map[string]any, reqId *uuid.UUID) {
 
-	storeId, ok := getStingProperty("storeId", request)
+	storeId, ok := getStringProperty("storeId", request)
 	if !ok || storeId == "" {
 		syncService.sendErrorResponse(syncClient.channelName, "Invalid CloseStoreRequest", reqId)
 		return
@@ -190,29 +210,29 @@ func (syncService *storeSyncService) closeStore(
 }
 
 func (syncService *storeSyncService) updateStore(
-	syncClient *syncClientChannel, request map[string]interface{}, reqId *uuid.UUID) {
+	syncClient *syncClientChannel, request map[string]any, reqId *uuid.UUID) {
 
-	storeId, ok := getStingProperty("storeId", request)
+	storeId, ok := getStringProperty("storeId", request)
 	if !ok || storeId == "" {
 		syncService.sendErrorResponse(
 			syncClient.channelName, "Invalid UpdateStoreRequest: missing storeId", reqId)
 		return
 	}
-	itemId, ok := getStingProperty("itemId", request)
+	itemId, ok := getStringProperty("itemId", request)
 	if !ok || itemId == "" {
 		syncService.sendErrorResponse(
 			syncClient.channelName, "Invalid UpdateStoreRequest: missing itemId", reqId)
 		return
 	}
 
-	store := syncService.bus.GetStoreManager().GetStore(storeId)
+	store := syncService.manager.GetStore(storeId)
 	if store == nil {
 		syncService.sendErrorResponse(
 			syncClient.channelName, "Cannot update non-existing store: "+storeId, reqId)
 		return
 	}
 
-	rawValue, ok := request["newItemValue"]
+	rawValue := request["newItemValue"]
 	if rawValue == nil {
 		store.Remove(itemId, galacticStoreSyncRemove)
 	} else {
@@ -229,7 +249,7 @@ func (syncService *storeSyncService) updateStore(
 	}
 }
 
-func getStingProperty(id string, request map[string]interface{}) (string, bool) {
+func getStringProperty(id string, request map[string]any) (string, bool) {
 	propValue, ok := request[id]
 	if !ok || propValue == nil {
 		return "", false
@@ -241,23 +261,29 @@ func getStingProperty(id string, request map[string]interface{}) (string, bool) 
 func (syncService *storeSyncService) sendErrorResponse(
 	clientChannel string, errorMsg string, reqId *uuid.UUID) {
 
-	syncService.bus.SendResponseMessage(clientChannel, &model.Response{
+	if err := syncService.bus.SendResponseMessage(clientChannel, &model.Response{
 		Id:           reqId,
 		Error:        true,
 		ErrorCode:    1,
 		ErrorMessage: errorMsg,
-	}, nil)
+	}, nil); err != nil {
+		syncService.log().Warn("failed to send store sync error response", "err", err, "channel", clientChannel)
+	}
 }
 
-func newSyncStoreListener(bus EventBus, store BusStore) *syncStoreListener {
+func newSyncStoreListener(eventBus bus.EventBus, store BusStore, logger *slog.Logger) *syncStoreListener {
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	listener := &syncStoreListener{
 		storeStream:        store.OnAllChanges(),
 		clientSyncChannels: make(map[string]bool),
+		logger:             logger,
 	}
 
-	listener.storeStream.Subscribe(func(change *StoreChange) {
-		updateStoreResp := model.NewUpdateStoreResponse(
+	if err := listener.storeStream.Subscribe(func(change *StoreChange) {
+		updateStoreResp := NewUpdateStoreResponse(
 			store.GetName(), change.Id, change.Value, change.StoreVersion)
 		if change.IsDeleteChange {
 			updateStoreResp.NewItemValue = nil
@@ -267,16 +293,29 @@ func newSyncStoreListener(bus EventBus, store BusStore) *syncStoreListener {
 		defer listener.lock.RUnlock()
 
 		for chName := range listener.clientSyncChannels {
-			bus.SendResponseMessage(chName, updateStoreResp, nil)
+			if err := eventBus.SendResponseMessage(chName, updateStoreResp, nil); err != nil {
+				listener.log().Warn("failed to send store update response", "err", err, "channel", chName)
+			}
 		}
-	})
+	}); err != nil {
+		listener.log().Warn("failed to subscribe store sync listener", "err", err, "store", store.GetName())
+	}
 
 	return listener
 }
 
+func (l *syncStoreListener) log() *slog.Logger {
+	if l.logger == nil {
+		return slog.Default()
+	}
+	return l.logger
+}
+
 func (l *syncStoreListener) unsubscribe() {
 
-	l.storeStream.Unsubscribe()
+	if err := l.storeStream.Unsubscribe(); err != nil {
+		l.log().Warn("failed to unsubscribe store sync listener", "err", err)
+	}
 }
 
 func (l *syncStoreListener) addChannel(clientChannel string) {

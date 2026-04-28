@@ -10,7 +10,7 @@ type MessageConfig struct {
 	DestinationId *uuid.UUID
 	Destination   string
 	Channel       string
-	Payload       interface{}
+	Payload       any
 	Headers       []MessageHeader
 	Direction     Direction
 	Err           error

@@ -5,11 +5,12 @@ package middleware
 
 import (
 	"fmt"
-	"github.com/gobwas/glob"
-	"github.com/gorilla/mux"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gobwas/glob"
+	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
 // CacheControlRulePair is a container that lumps together the glob pattern, cache control rule that should be applied to
@@ -113,8 +114,8 @@ func (c *CacheControlDirective) String() string {
 	return strings.Join(c.directives, ", ")
 }
 
-// CacheControlMiddleware is the middleware function to be provided as a parameter to mux.Handler()
-func CacheControlMiddleware(globPatterns []string, directive *CacheControlDirective) mux.MiddlewareFunc {
+// CacheControlMiddleware is the middleware function to be provided as a parameter to a route handler.
+func CacheControlMiddleware(globPatterns []string, directive *CacheControlDirective) routing.MiddlewareFunc {
 	parsed := parseGlobPatterns(globPatterns)
 	return func(handler http.Handler) http.Handler {
 		return cacheControlWrapper(handler, parsed, directive)

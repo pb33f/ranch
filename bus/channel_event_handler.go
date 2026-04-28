@@ -5,11 +5,14 @@ package bus
 
 import (
 	"github.com/google/uuid"
+	"sync/atomic"
 )
 
 type channelEventHandler struct {
-	callBackFunction MessageHandlerFunction
-	runOnce          bool
-	runCount         int64
-	uuid             *uuid.UUID
+	callBackFunction        MessageHandlerFunction
+	contextCallBackFunction MessageHandlerContextFunction
+	runOnce                 bool
+	runCount                int64
+	fired                   atomic.Bool
+	uuid                    *uuid.UUID
 }

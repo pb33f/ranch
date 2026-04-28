@@ -3,20 +3,15 @@
 
 package bus
 
-type MonitorEventType int32
+type MonitorEventType string
 
 const (
-	ChannelCreatedEvt MonitorEventType = iota
-	ChannelDestroyedEvt
-	ChannelSubscriberJoinedEvt
-	ChannelSubscriberLeftEvt
-	StoreCreatedEvt
-	StoreDestroyedEvt
-	StoreInitializedEvt
-	BrokerSubscribedEvt
-	BrokerUnsubscribedEvt
-	FabricEndpointSubscribeEvt
-	FabricEndpointUnsubscribeEvt
+	ChannelCreatedEvt          MonitorEventType = "bus.channel.created"
+	ChannelDestroyedEvt        MonitorEventType = "bus.channel.destroyed"
+	ChannelSubscriberJoinedEvt MonitorEventType = "bus.channel.subscriber.joined"
+	ChannelSubscriberLeftEvt   MonitorEventType = "bus.channel.subscriber.left"
+	BrokerSubscribedEvt        MonitorEventType = "bus.broker.subscribed"
+	BrokerUnsubscribedEvt      MonitorEventType = "bus.broker.unsubscribed"
 )
 
 type MonitorEventHandler func(event *MonitorEvent)
@@ -27,10 +22,10 @@ type MonitorEvent struct {
 	// The name of the channel or the store related to this event
 	EntityName string
 	// Optional event data
-	Data interface{}
+	Data any
 }
 
 // Create a new monitor event
-func NewMonitorEvent(evtType MonitorEventType, entityName string, data interface{}) *MonitorEvent {
+func NewMonitorEvent(evtType MonitorEventType, entityName string, data any) *MonitorEvent {
 	return &MonitorEvent{EventType: evtType, Data: data, EntityName: entityName}
 }

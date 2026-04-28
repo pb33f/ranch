@@ -6,13 +6,15 @@ package bus
 import (
 	"errors"
 	"fmt"
+
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bridge"
 	"github.com/pb33f/ranch/model"
 	"sync"
+	"sync/atomic"
 )
 
-// ChannelManager interfaces controls all access to channels vis the bus.
+// ChannelManager owns channel lifecycle and subscription access for an EventBus.
 type ChannelManager interface {
 	CreateChannel(channelName string) *Channel
 	DestroyChannel(channelName string)
@@ -20,6 +22,7 @@ type ChannelManager interface {
 	GetChannel(channelName string) (*Channel, error)
 	GetAllChannels() map[string]*Channel
 	SubscribeChannelHandler(channelName string, fn MessageHandlerFunction, runOnce bool) (*uuid.UUID, error)
+	SubscribeChannelHandlerContext(channelName string, fn MessageHandlerContextFunction, runOnce bool) (*uuid.UUID, error)
 	UnsubscribeChannelHandler(channelName string, id *uuid.UUID) error
 	WaitForChannel(channelName string) error
 	MarkChannelAsGalactic(channelName string, brokerDestination string, connection bridge.Connection) (err error)
@@ -28,68 +31,85 @@ type ChannelManager interface {
 
 func NewBusChannelManager(bus EventBus) ChannelManager {
 	manager := new(busChannelManager)
-	manager.Channels = make(map[string]*Channel)
+	channels := make(map[string]*Channel)
+	manager.channels.Store(&channels)
 	manager.bus = bus.(*transportEventBus)
 	return manager
 }
 
 type busChannelManager struct {
-	Channels map[string]*Channel
+	// channels uses atomic copy-on-write because channel lookup is on the send path.
+	// BenchmarkChannelManagerGetChannelParallel on Apple M4 Max: RWMutex ~130 ns/op,
+	// sync.Map ~66 ns/op, atomic COW map ~65 ns/op; all variants were 0 allocs/op.
+	channels atomic.Pointer[map[string]*Channel]
 	bus      *transportEventBus
-	lock     sync.RWMutex
+	lock     sync.Mutex
 }
 
-// Create a new Channel with the supplied Channel name. Returns pointer to new Channel object
 func (manager *busChannelManager) CreateChannel(channelName string) *Channel {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 
-	channel, ok := manager.Channels[channelName]
+	current := manager.channelSnapshot()
+	channel, ok := current[channelName]
 	if ok {
 		return channel
 	}
 
-	manager.Channels[channelName] = NewChannel(channelName)
+	next := make(map[string]*Channel, len(current)+1)
+	for name, ch := range current {
+		next[name] = ch
+	}
+	next[channelName] = NewChannel(channelName)
+	manager.channels.Store(&next)
 	go manager.bus.SendMonitorEvent(ChannelCreatedEvt, channelName, nil)
-	return manager.Channels[channelName]
+	return next[channelName]
 }
 
-// Destroy a Channel and all the handlers listening on it.
 func (manager *busChannelManager) DestroyChannel(channelName string) {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 
-	delete(manager.Channels, channelName)
+	current := manager.channelSnapshot()
+	next := make(map[string]*Channel, len(current))
+	for name, ch := range current {
+		if name != channelName {
+			next[name] = ch
+		}
+	}
+	manager.channels.Store(&next)
 	go manager.bus.SendMonitorEvent(ChannelDestroyedEvt, channelName, nil)
 }
 
-// Get a pointer to a Channel by name. Returns points, or error if no Channel is found.
 func (manager *busChannelManager) GetChannel(channelName string) (*Channel, error) {
-	manager.lock.RLock()
-	defer manager.lock.RUnlock()
-
-	if channel, ok := manager.Channels[channelName]; ok {
+	if channel, ok := manager.channelSnapshot()[channelName]; ok {
 		return channel, nil
 	} else {
 		return nil, errors.New("Channel does not exist: " + channelName)
 	}
 }
 
-// Get all channels currently open. Returns a map of Channel names and pointers to those Channel objects.
 func (manager *busChannelManager) GetAllChannels() map[string]*Channel {
-	return manager.Channels
+	current := manager.channelSnapshot()
+	channels := make(map[string]*Channel, len(current))
+	for name, ch := range current {
+		channels[name] = ch
+	}
+	return channels
 }
 
-// Check Channel exists, returns true if so.
 func (manager *busChannelManager) CheckChannelExists(channelName string) bool {
-	manager.lock.RLock()
-	defer manager.lock.RUnlock()
-
-	return manager.Channels[channelName] != nil
+	return manager.channelSnapshot()[channelName] != nil
 }
 
-// Subscribe new handler lambda for Channel, bool flag runOnce determines if this is a single Fire handler.
-// Returns UUID pointer, or error if there is no Channel by that name.
+func (manager *busChannelManager) channelSnapshot() map[string]*Channel {
+	channels := manager.channels.Load()
+	if channels == nil {
+		return nil
+	}
+	return *channels
+}
+
 func (manager *busChannelManager) SubscribeChannelHandler(channelName string, fn MessageHandlerFunction, runOnce bool) (*uuid.UUID, error) {
 	channel, err := manager.GetChannel(channelName)
 	if err != nil {
@@ -101,7 +121,18 @@ func (manager *busChannelManager) SubscribeChannelHandler(channelName string, fn
 	return &id, nil
 }
 
-// Unsubscribe a handler for a Channel event handler.
+func (manager *busChannelManager) SubscribeChannelHandlerContext(
+	channelName string, fn MessageHandlerContextFunction, runOnce bool) (*uuid.UUID, error) {
+	channel, err := manager.GetChannel(channelName)
+	if err != nil {
+		return nil, err
+	}
+	id := uuid.New()
+	channel.subscribeHandler(&channelEventHandler{contextCallBackFunction: fn, runOnce: runOnce, uuid: &id})
+	manager.bus.SendMonitorEvent(ChannelSubscriberJoinedEvt, channelName, nil)
+	return &id, nil
+}
+
 func (manager *busChannelManager) UnsubscribeChannelHandler(channelName string, uuid *uuid.UUID) error {
 	channel, err := manager.GetChannel(channelName)
 	if err != nil {
@@ -124,27 +155,20 @@ func (manager *busChannelManager) WaitForChannel(channelName string) error {
 	return nil
 }
 
-// Mark a channel as Galactic. This will map this channel to the supplied broker destination, if the broker connector
-// is active and connected, this will result in a subscription to the broker destination being created. Returns
-// an error if the channel does not exist.
 func (manager *busChannelManager) MarkChannelAsGalactic(channelName string, dest string, conn bridge.Connection) (err error) {
 	channel, err := manager.GetChannel(channelName)
 	if err != nil {
 		return
 	}
 
-	// mark as galactic/
 	channel.SetGalactic(dest)
 
-	// create a galactic event
 	pl := &galacticEvent{conn: conn, dest: dest}
 
 	manager.handleGalacticChannelEvent(channelName, pl)
 	return nil
 }
 
-// Mark a channel as Local. This will unmap the channel from the broker destination, and perform an unsubscribe
-// operation if the broker connector is active and connected. Returns an error if the channel does not exist.
 func (manager *busChannelManager) MarkChannelAsLocal(channelName string) (err error) {
 	channel, err := manager.GetChannel(channelName)
 	if err != nil {
@@ -152,7 +176,6 @@ func (manager *busChannelManager) MarkChannelAsLocal(channelName string) (err er
 	}
 	channel.SetLocal()
 
-	// get rid of all broker connections.
 	channel.removeBrokerConnections()
 
 	manager.handleLocalChannelEvent(channelName)
@@ -167,11 +190,9 @@ func (manager *busChannelManager) handleGalacticChannelEvent(channelName string,
 		return
 	}
 
-	// check if channel is already subscribed on this connection
 	if !ch.isBrokerSubscribedToDestination(ge.conn, ge.dest) {
 		if sub, e := ge.conn.Subscribe(ge.dest); e == nil {
 
-			// add broker connection to channel.
 			ch.addBrokerConnection(ge.conn)
 
 			m := model.GenerateResponse(&model.MessageConfig{Payload: ge.dest}) // set the mapped destination as the payload
@@ -199,7 +220,6 @@ func (manager *busChannelManager) handleLocalChannelEvent(channelName string) {
 			}
 		}
 	}
-	// get rid of all broker subscriptions on this channel.
 	ch.removeBrokerConnections()
 }
 

@@ -1,10 +1,11 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
 	"github.com/google/uuid"
+	"github.com/pb33f/ranch/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"reflect"
@@ -13,8 +14,8 @@ import (
 	"testing"
 )
 
-func createTestStoreManager() StoreManager {
-	return newStoreManager(GetBus())
+func createTestStoreManager() Manager {
+	return NewManager(bus.NewEventBus())
 }
 
 func TestStoreManager_CreateStore(t *testing.T) {
@@ -86,7 +87,7 @@ func TestStoreManager_ConfigureStoreSyncChannel(t *testing.T) {
 	syncChannelDst := "/topic-prefix/transport-store-sync." + id.String()
 	con.On("Subscribe", syncChannelDst).Return(s, nil)
 	con.On("SendMessage", syncChannelDst, mock.Anything).Return(nil)
-	m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
+	_ = m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
 
 	storeManagerImpl := m.(*storeManager)
 
@@ -98,7 +99,7 @@ func TestStoreManager_ConfigureStoreSyncChannel(t *testing.T) {
 	assert.Equal(t, conf.conn, con)
 
 	syncCh, _ := storeManagerImpl.eventBus.GetChannelManager().GetChannel(conf.syncChannelName)
-	assert.True(t, syncCh.galactic)
+	assert.True(t, syncCh.IsGalactic())
 
 	err := m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
 	assert.EqualError(t, err, "store sync channel already configured for this connection")
@@ -124,11 +125,12 @@ func TestStoreManager_OpenGalacticStore(t *testing.T) {
 	con.On("Subscribe", mock.Anything).Return(sub, nil)
 	con.On("SendJSONMessage", mock.Anything, mock.Anything).Return(nil)
 	con.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
+	_ = m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
 
 	storeManagerImpl := m.(*storeManager)
 
-	conf, _ := storeManagerImpl.syncChannels[id]
+	conf, ok := storeManagerImpl.syncChannels[id]
+	assert.True(t, ok)
 	assert.NotNil(t, conf)
 
 	s, err = m.OpenGalacticStore("galacticStore", con)
@@ -156,7 +158,7 @@ func TestStoreManager_OpenGalacticStore(t *testing.T) {
         } 
     }`)
 
-	storeManagerImpl.eventBus.SendResponseMessage(conf.syncChannelName, jsonBlob, nil)
+	_ = storeManagerImpl.eventBus.SendResponseMessage(conf.syncChannelName, jsonBlob, nil)
 	wg.Wait()
 }
 
@@ -177,11 +179,12 @@ func TestStoreManager_OpenGalacticStoreWithType(t *testing.T) {
 	con.On("Subscribe", mock.Anything).Return(sub, nil)
 	con.On("SendJSONMessage", mock.Anything, mock.Anything).Return(nil)
 	con.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
-	m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
+	_ = m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
 
 	storeManagerImpl := m.(*storeManager)
 
-	conf, _ := storeManagerImpl.syncChannels[id]
+	conf, ok := storeManagerImpl.syncChannels[id]
+	assert.True(t, ok)
 	assert.NotNil(t, conf)
 
 	store, _ := m.OpenGalacticStoreWithItemType("galacticStore", con, reflect.TypeOf(MockStoreItem{}))
@@ -218,7 +221,7 @@ func TestStoreManager_OpenGalacticStoreWithType(t *testing.T) {
         } 
     }`)
 
-	storeManagerImpl.eventBus.SendResponseMessage(conf.syncChannelName, jsonBlob, nil)
+	_ = storeManagerImpl.eventBus.SendResponseMessage(conf.syncChannelName, jsonBlob, nil)
 	wg.Wait()
 }
 
@@ -233,7 +236,7 @@ func TestStoreManager_OpenGalacticStoreWithLocalStoreId(t *testing.T) {
 	}
 	con.On("Subscribe", mock.Anything).Return(sub, nil)
 	con.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
-	m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
+	_ = m.ConfigureStoreSyncChannel(con, "/topic-prefix", "/pub-prefix")
 
 	localStore := m.CreateStore("localStore")
 

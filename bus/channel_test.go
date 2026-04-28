@@ -5,6 +5,7 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"github.com/go-stomp/stomp/v3/frame"
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bridge"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"testing"
+	"time"
 )
 
 var testChannelName string = "testing"
@@ -19,7 +21,7 @@ var testChannelName string = "testing"
 func TestChannel_CheckChannelCreation(t *testing.T) {
 
 	channel := NewChannel(testChannelName)
-	assert.Empty(t, channel.eventHandlers)
+	assert.Empty(t, channel.handlersSnapshot())
 
 }
 
@@ -29,11 +31,11 @@ func TestChannel_SubscribeHandler(t *testing.T) {
 	handler := func(*model.Message) {}
 	channel.subscribeHandler(&channelEventHandler{callBackFunction: handler, runOnce: false, uuid: &id})
 
-	assert.Equal(t, 1, len(channel.eventHandlers))
+	assert.Equal(t, 1, len(channel.handlersSnapshot()))
 
 	channel.subscribeHandler(&channelEventHandler{callBackFunction: handler, runOnce: false, uuid: &id})
 
-	assert.Equal(t, 2, len(channel.eventHandlers))
+	assert.Equal(t, 2, len(channel.handlersSnapshot()))
 }
 
 func TestChannel_HandlerCheck(t *testing.T) {
@@ -67,6 +69,62 @@ func TestChannel_SendMessage(t *testing.T) {
 	channel.wg.Wait()
 }
 
+func TestChannel_SendContextPassesContext(t *testing.T) {
+	id := uuid.New()
+	channel := NewChannel(testChannelName)
+	type contextKey string
+	key := contextKey("trace")
+
+	var got string
+	handler := func(ctx context.Context, message *model.Message) {
+		got = ctx.Value(key).(string)
+	}
+
+	channel.subscribeHandler(&channelEventHandler{contextCallBackFunction: handler, runOnce: false, uuid: &id})
+
+	message := &model.Message{Id: &id, Channel: testChannelName, Direction: model.RequestDir}
+	channel.SendContext(context.WithValue(context.Background(), key, "request-1"), message)
+	channel.wg.Wait()
+
+	assert.Equal(t, "request-1", got)
+}
+
+func TestChannel_SendContextCancelled(t *testing.T) {
+	id := uuid.New()
+	channel := NewChannel(testChannelName)
+	called := false
+
+	handler := func(ctx context.Context, message *model.Message) {
+		called = true
+	}
+	channel.subscribeHandler(&channelEventHandler{contextCallBackFunction: handler, runOnce: false, uuid: &id})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	channel.SendContext(ctx, &model.Message{Id: &id, Channel: testChannelName, Direction: model.RequestDir})
+	channel.wg.Wait()
+
+	assert.False(t, called)
+}
+
+func TestMessageHandler_FireContextIgnoresUnrelatedChannelWaits(t *testing.T) {
+	id := uuid.New()
+	channel := NewChannel(testChannelName)
+	channel.wg.Add(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	handler := &messageHandler{
+		channel:        channel,
+		requestMessage: &model.Message{Id: &id, Channel: testChannelName, Direction: model.RequestDir},
+	}
+	err := handler.FireContext(ctx)
+	channel.wg.Done()
+
+	assert.NoError(t, err)
+}
+
 func TestChannel_SendMessageRunOnceHasRun(t *testing.T) {
 	id := uuid.New()
 	channel := NewChannel(testChannelName)
@@ -88,10 +146,13 @@ func TestChannel_SendMessageRunOnceHasRun(t *testing.T) {
 
 	channel.Send(message)
 	channel.wg.Wait()
-	h.runCount = 1
+	assert.False(t, channel.ContainsHandlers())
 	channel.Send(message)
-	assert.Len(t, channel.eventHandlers, 0)
 	assert.Equal(t, 1, count)
+
+	secondID := uuid.New()
+	channel.subscribeHandler(&channelEventHandler{callBackFunction: handler, runOnce: false, uuid: &secondID})
+	assert.Len(t, channel.handlersSnapshot(), 1)
 }
 
 func TestChannel_SendMultipleMessages(t *testing.T) {
@@ -116,6 +177,45 @@ func TestChannel_SendMultipleMessages(t *testing.T) {
 	channel.Send(message)
 	channel.wg.Wait()
 	assert.Equal(t, int32(3), counter)
+}
+
+func TestChannel_SendContextDeliversAfterCallerCancel(t *testing.T) {
+	id := uuid.New()
+	channel := NewChannel(testChannelName)
+	var counter int32
+	releaseHandler := make(chan struct{})
+	deadline := time.Now().Add(time.Hour)
+	var handlerDeadline time.Time
+	var handlerHasDeadline bool
+	var handlerErr error
+
+	channel.subscribeHandler(&channelEventHandler{
+		contextCallBackFunction: func(ctx context.Context, message *model.Message) {
+			<-releaseHandler
+			handlerDeadline, handlerHasDeadline = ctx.Deadline()
+			handlerErr = ctx.Err()
+			assert.Equal(t, "accepted-message", message.Payload)
+			inc(&counter)
+		},
+		runOnce: false,
+		uuid:    &id,
+	})
+
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	channel.SendContext(ctx, &model.Message{
+		Id:        &id,
+		Payload:   "accepted-message",
+		Channel:   testChannelName,
+		Direction: model.RequestDir,
+	})
+	cancel()
+	close(releaseHandler)
+
+	channel.wg.Wait()
+	assert.Equal(t, int32(1), counter)
+	assert.True(t, handlerHasDeadline)
+	assert.Equal(t, deadline, handlerDeadline)
+	assert.ErrorIs(t, handlerErr, context.Canceled)
 }
 
 func TestChannel_MultiHandlerSingleMessage(t *testing.T) {
@@ -180,16 +280,16 @@ func TestChannel_RemoveEventHandler(t *testing.T) {
 
 	channel.subscribeHandler(&channelEventHandler{callBackFunction: handlerB, runOnce: false, uuid: &idB})
 
-	assert.Len(t, channel.eventHandlers, 2)
+	assert.Len(t, channel.handlersSnapshot(), 2)
 
 	// remove the first handler (A)
 	channel.removeEventHandler(0)
-	assert.Len(t, channel.eventHandlers, 1)
-	assert.Equal(t, idB.String(), channel.eventHandlers[0].uuid.String())
+	assert.Len(t, channel.handlersSnapshot(), 1)
+	assert.Equal(t, idB.String(), channel.handlersSnapshot()[0].uuid.String())
 
 	// remove the second handler B)
 	channel.removeEventHandler(0)
-	assert.True(t, len(channel.eventHandlers) == 0)
+	assert.True(t, len(channel.handlersSnapshot()) == 0)
 
 }
 
@@ -197,7 +297,7 @@ func TestChannel_RemoveEventHandlerNoHandlers(t *testing.T) {
 	channel := NewChannel(testChannelName)
 
 	channel.removeEventHandler(0)
-	assert.Len(t, channel.eventHandlers, 0)
+	assert.Len(t, channel.handlersSnapshot(), 0)
 }
 
 func TestChannel_RemoveEventHandlerOOBIndex(t *testing.T) {
@@ -207,7 +307,7 @@ func TestChannel_RemoveEventHandlerOOBIndex(t *testing.T) {
 	channel.subscribeHandler(&channelEventHandler{callBackFunction: handler, runOnce: false, uuid: &id})
 
 	channel.removeEventHandler(999)
-	assert.Len(t, channel.eventHandlers, 1)
+	assert.Len(t, channel.handlersSnapshot(), 1)
 }
 
 func TestChannel_AddRemoveBrokerSubscription(t *testing.T) {
@@ -233,7 +333,7 @@ func TestChannel_CheckIfBrokerSubscribed(t *testing.T) {
 	s := &MockBridgeSubscription{Id: &sId}
 	s2 := &MockBridgeSubscription{Id: &sId2}
 
-	cm := NewBusChannelManager(GetBus())
+	cm := NewBusChannelManager(NewEventBus())
 	ch := cm.CreateChannel("testing-broker-subs")
 	ch.addBrokerSubscription(c, s)
 	assert.True(t, ch.isBrokerSubscribed(s))
@@ -249,13 +349,11 @@ type MockBridgeConnection struct {
 }
 
 func (c *MockBridgeConnection) Conversation(destination string, payload []byte, opts ...func(*frame.Frame) error) (bridge.Subscription, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, errors.New("unexpected Conversation call")
 }
 
 func (c *MockBridgeConnection) RequestResponse(ctx context.Context, payload []byte, opts ...func(*frame.Frame) error) (*model.Message, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, errors.New("unexpected RequestResponse call")
 }
 
 func (c *MockBridgeConnection) GetId() *uuid.UUID {

@@ -1,18 +1,19 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
 
 type MutationRequest struct {
-	Request        interface{}
-	RequestType    interface{}
-	SuccessHandler func(interface{})
-	ErrorHandler   func(interface{})
+	Request        any
+	RequestType    any
+	SuccessHandler func(any)
+	ErrorHandler   func(any)
 }
 
 type MutationRequestHandlerFunction func(mutationReq *MutationRequest)
@@ -26,7 +27,7 @@ type MutationStoreStream interface {
 }
 
 type mutationStreamFilter struct {
-	requestTypes []interface{}
+	requestTypes []any
 }
 
 func (f *mutationStreamFilter) match(mutationReq *MutationRequest) bool {
@@ -87,14 +88,24 @@ func (ms *mutationStoreStream) Unsubscribe() error {
 	return nil
 }
 
-func (ms *mutationStoreStream) onMutationRequest(mutationReq *MutationRequest) {
+func (ms *mutationStoreStream) onMutationRequest(ctx context.Context, mutationReq *MutationRequest) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	if !ms.filter.match(mutationReq) {
 		return
 	}
 
 	ms.lock.RLock()
-	defer ms.lock.RUnlock()
-	if ms.handler != nil {
-		go ms.handler(mutationReq)
+	handler := ms.handler
+	ms.lock.RUnlock()
+	if handler != nil {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		handler(mutationReq)
 	}
 }

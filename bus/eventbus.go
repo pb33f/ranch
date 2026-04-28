@@ -4,26 +4,32 @@
 package bus
 
 import (
+	"context"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bridge"
 	"github.com/pb33f/ranch/model"
-	"github.com/pb33f/ranch/stompserver"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
 
 const RANCH_INTERNAL_CHANNEL_PREFIX = "_ranchInternal/"
 
-// EventBus provides access to ChannelManager, simple message sending and simple API calls for handling
-// messaging and error handling over channels on the bus.
-type EventBus interface {
-	GetId() *uuid.UUID
-	GetChannelManager() ChannelManager
-	SendRequestMessage(channelName string, payload interface{}, destinationId *uuid.UUID) error
-	SendResponseMessage(channelName string, payload interface{}, destinationId *uuid.UUID) error
-	SendBroadcastMessage(channelName string, payload interface{}) error
+type Publisher interface {
+	SendRequestMessage(channelName string, payload any, destinationId *uuid.UUID) error
+	SendRequestMessageContext(
+		ctx context.Context, channelName string, payload any, destinationId *uuid.UUID) error
+	SendResponseMessage(channelName string, payload any, destinationId *uuid.UUID) error
+	SendResponseMessageContext(
+		ctx context.Context, channelName string, payload any, destinationId *uuid.UUID) error
+	SendBroadcastMessage(channelName string, payload any) error
+	SendBroadcastMessageContext(ctx context.Context, channelName string, payload any) error
 	SendErrorMessage(channelName string, err error, destinationId *uuid.UUID) error
+	SendErrorMessageContext(ctx context.Context, channelName string, err error, destinationId *uuid.UUID) error
+}
+
+type Subscriber interface {
 	ListenStream(channelName string) (MessageHandler, error)
 	ListenStreamForDestination(channelName string, destinationId *uuid.UUID) (MessageHandler, error)
 	ListenFirehose(channelName string) (MessageHandler, error)
@@ -33,61 +39,53 @@ type EventBus interface {
 	ListenRequestOnceForDestination(channelName string, destinationId *uuid.UUID) (MessageHandler, error)
 	ListenOnce(channelName string) (MessageHandler, error)
 	ListenOnceForDestination(channelName string, destId *uuid.UUID) (MessageHandler, error)
-	RequestOnce(channelName string, payload interface{}) (MessageHandler, error)
-	RequestOnceForDestination(channelName string, payload interface{}, destId *uuid.UUID) (MessageHandler, error)
-	RequestStream(channelName string, payload interface{}) (MessageHandler, error)
-	RequestStreamForDestination(channelName string, payload interface{}, destId *uuid.UUID) (MessageHandler, error)
+	RequestOnce(channelName string, payload any) (MessageHandler, error)
+	RequestOnceForDestination(channelName string, payload any, destId *uuid.UUID) (MessageHandler, error)
+	RequestStream(channelName string, payload any) (MessageHandler, error)
+	RequestStreamForDestination(channelName string, payload any, destId *uuid.UUID) (MessageHandler, error)
+}
+
+type ChannelControl interface {
+	GetChannelManager() ChannelManager
+}
+
+type BrokerControl interface {
 	ConnectBroker(config *bridge.BrokerConnectorConfig) (conn bridge.Connection, err error)
-	StartFabricEndpoint(connectionListener stompserver.RawConnectionListener, config EndpointConfig) error
-	StopFabricEndpoint() error
-	GetStompServer() stompserver.StompServer
-	GetStoreManager() StoreManager
-	CreateSyncTransaction() BusTransaction
-	CreateAsyncTransaction() BusTransaction
+}
+
+type MonitorControl interface {
 	AddMonitorEventListener(listener MonitorEventHandler, eventTypes ...MonitorEventType) MonitorEventListenerId
 	RemoveMonitorEventListener(listenerId MonitorEventListenerId)
-	SendMonitorEvent(evtType MonitorEventType, entityName string, data interface{})
+	SendMonitorEvent(evtType MonitorEventType, entityName string, data any)
 }
 
-var enableLogging bool = false
-
-func EnableLogging(enable bool) {
-	enableLogging = enable
+type EventBus interface {
+	Publisher
+	Subscriber
+	ChannelControl
+	BrokerControl
+	MonitorControl
+	GetId() *uuid.UUID
 }
 
-var once sync.Once
-var busInstance EventBus
-
-// ResetBus destroys existing bus instance and creates a new one
-func ResetBus() EventBus {
-	once = sync.Once{}
-	return GetBus()
+func NewEventBus() EventBus {
+	return NewEventBusWithLogger(nil)
 }
 
-// Get a reference to the EventBus.
-func GetBus() EventBus {
-	once.Do(func() {
-		busInstance = NewEventBusInstance()
-	})
-	return busInstance
-}
-
-func NewEventBusInstance() EventBus {
+func NewEventBusWithLogger(logger *slog.Logger) EventBus {
 	bf := new(transportEventBus)
-	bf.init()
+	bf.init(logger)
 	return bf
 }
 
 type transportEventBus struct {
-	ChannelManager    ChannelManager
-	storeManager      StoreManager
-	Id                uuid.UUID
-	brokerConnections map[*uuid.UUID]bridge.Connection
-	bc                bridge.BrokerConnector
-	fabEndpoint       FabricEndpoint
-	initStoreSync     sync.Once
-	storeSyncService  *storeSyncService
-	monitor           *transportMonitor
+	ChannelManager      ChannelManager
+	Id                  uuid.UUID
+	brokerConnections   map[uuid.UUID]bridge.Connection
+	brokerConnectionsMu sync.RWMutex
+	bc                  bridge.BrokerConnector
+	monitor             *transportMonitor
+	logger              *slog.Logger
 }
 
 type MonitorEventListenerId int
@@ -97,6 +95,26 @@ type transportMonitor struct {
 	listenersByType       map[MonitorEventType]map[MonitorEventListenerId]MonitorEventHandler
 	listenersForAllEvents map[MonitorEventListenerId]MonitorEventHandler
 	subId                 MonitorEventListenerId
+}
+
+type sendMessageOptions struct {
+	direction     model.Direction
+	channelName   string
+	payload       any
+	err           error
+	destinationId *uuid.UUID
+}
+
+type messageHandlerOptions struct {
+	direction           model.Direction
+	destinationId       *uuid.UUID
+	ignoreId            bool
+	allTraffic          bool
+	runOnce             bool
+	requireDestination  bool
+	generateDestination bool
+	requestPayload      any
+	withRequest         bool
 }
 
 func newMonitor() *transportMonitor {
@@ -154,360 +172,223 @@ func (bus *transportEventBus) GetId() *uuid.UUID {
 	return &bus.Id
 }
 
-func (bus *transportEventBus) init() {
+func (bus *transportEventBus) init(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	bus.logger = logger
 	bus.Id = uuid.New()
-	bus.storeManager = newStoreManager(bus)
 	bus.ChannelManager = NewBusChannelManager(bus)
-	bus.brokerConnections = make(map[*uuid.UUID]bridge.Connection)
+	bus.brokerConnections = make(map[uuid.UUID]bridge.Connection)
 	bus.bc = bridge.NewBrokerConnector()
 	bus.monitor = newMonitor()
-	if enableLogging {
-		fmt.Printf("🌈 ranch booted with Id [%s]\n", bus.Id.String())
-	}
+	bus.logger.Debug("ranch booted", "id", bus.Id.String())
 }
 
-func (bus *transportEventBus) GetStoreManager() StoreManager {
-	return bus.storeManager
-}
-
-func (bus *transportEventBus) GetStompServer() stompserver.StompServer {
-	if bus.fabEndpoint != nil {
-		return bus.fabEndpoint.GetStompServer()
-	}
-	return nil
-}
-
-// GetChannelManager Get a pointer to the ChannelManager for managing Channels.
 func (bus *transportEventBus) GetChannelManager() ChannelManager {
 	return bus.ChannelManager
 }
 
-// SendResponseMessage Send a ResponseDir type (inbound) message on Channel, with supplied Payload.
-// Throws error if the Channel does not exist.
-func (bus *transportEventBus) SendResponseMessage(channelName string, payload interface{}, destId *uuid.UUID) error {
-	channelObject, err := bus.ChannelManager.GetChannel(channelName)
-	if err != nil {
-		return err
-	}
-	config := buildConfig(channelName, payload, destId)
-	message := model.GenerateResponse(config)
-	sendMessageToChannel(channelObject, message)
-	return nil
+func (bus *transportEventBus) SendResponseMessage(channelName string, payload any, destId *uuid.UUID) error {
+	return bus.SendResponseMessageContext(context.Background(), channelName, payload, destId)
 }
 
-// SendBroadcastMessage sends the payload as an outbound broadcast message to channelName. Since it is a broadcast,
-// the payload does not require a destination ID. Throws an error if the channel does not exist.
-func (bus *transportEventBus) SendBroadcastMessage(channelName string, payload interface{}) error {
-	channelObject, err := bus.ChannelManager.GetChannel(channelName)
-	if err != nil {
-		return err
-	}
-	config := buildConfig(channelName, payload, nil)
-	message := model.GenerateResponse(config)
-	sendMessageToChannel(channelObject, message)
-	return nil
+func (bus *transportEventBus) SendResponseMessageContext(
+	ctx context.Context, channelName string, payload any, destId *uuid.UUID) error {
+	return bus.sendMessageContext(ctx, sendMessageOptions{
+		direction:     model.ResponseDir,
+		channelName:   channelName,
+		payload:       payload,
+		destinationId: destId,
+	})
 }
 
-// SendRequestMessage Send a RequestDir type message (outbound) message on Channel, with supplied Payload.
-// Throws error if the Channel does not exist.
-func (bus *transportEventBus) SendRequestMessage(channelName string, payload interface{}, destId *uuid.UUID) error {
-	channelObject, err := bus.ChannelManager.GetChannel(channelName)
-	if err != nil {
-		return err
-	}
-	config := buildConfig(channelName, payload, destId)
-	message := model.GenerateRequest(config)
-	sendMessageToChannel(channelObject, message)
-	return nil
+func (bus *transportEventBus) SendBroadcastMessage(channelName string, payload any) error {
+	return bus.SendBroadcastMessageContext(context.Background(), channelName, payload)
 }
 
-// SendErrorMessage Send a ErrorDir type message (outbound) message on Channel, with supplied error
-// Throws error if the Channel does not exist.
+func (bus *transportEventBus) SendBroadcastMessageContext(ctx context.Context, channelName string, payload any) error {
+	return bus.sendMessageContext(ctx, sendMessageOptions{
+		direction:   model.ResponseDir,
+		channelName: channelName,
+		payload:     payload,
+	})
+}
+
+func (bus *transportEventBus) SendRequestMessage(channelName string, payload any, destId *uuid.UUID) error {
+	return bus.SendRequestMessageContext(context.Background(), channelName, payload, destId)
+}
+
+func (bus *transportEventBus) SendRequestMessageContext(
+	ctx context.Context, channelName string, payload any, destId *uuid.UUID) error {
+	return bus.sendMessageContext(ctx, sendMessageOptions{
+		direction:     model.RequestDir,
+		channelName:   channelName,
+		payload:       payload,
+		destinationId: destId,
+	})
+}
+
 func (bus *transportEventBus) SendErrorMessage(channelName string, err error, destId *uuid.UUID) error {
-	channelObject, chanErr := bus.ChannelManager.GetChannel(channelName)
-	if chanErr != nil {
-		return err
-	}
-	config := buildError(channelName, err, destId)
-	message := model.GenerateError(config)
-	sendMessageToChannel(channelObject, message)
-	return nil
+	return bus.SendErrorMessageContext(context.Background(), channelName, err, destId)
 }
 
-// ListenStream Listen to stream of ResponseDir (inbound) messages on Channel. Will keep on ticking until closed.
-// Returns MessageHandler
-//
-//	// To close an open stream.
-//	handler, Err := bus.ListenStream("my-Channel")
-//	// ...
-//	handler.close() // this will close the stream.
+func (bus *transportEventBus) SendErrorMessageContext(
+	ctx context.Context, channelName string, err error, destId *uuid.UUID) error {
+	return bus.sendMessageContext(ctx, sendMessageOptions{
+		direction:     model.ErrorDir,
+		channelName:   channelName,
+		err:           err,
+		destinationId: destId,
+	})
+}
+
 func (bus *transportEventBus) ListenStream(channelName string) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, true, false, nil, false)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction: model.ResponseDir,
+		ignoreId:  true,
+	})
 }
 
-// AddMonitorEventListener Adds new monitor event listener for the a given set of event types.
-// If eventTypes param is not provided, the listener will be called for all events.
-// Returns the id of the newly added event listener.
 func (bus *transportEventBus) AddMonitorEventListener(
 	listener MonitorEventHandler, eventTypes ...MonitorEventType) MonitorEventListenerId {
 
 	return bus.monitor.addListener(listener, eventTypes)
 }
 
-// RemoveMonitorEventListener Removes a given event listener
 func (bus *transportEventBus) RemoveMonitorEventListener(listenerId MonitorEventListenerId) {
 	bus.monitor.removeListener(listenerId)
 }
 
-// ListenStreamForDestination Listen to stream of ResponseDir (inbound) messages on Channel for a specific DestinationId.
-// Will keep on ticking until closed, returns MessageHandler
-//
-//	// To close an open stream.
-//	handler, Err := bus.ListenStream("my-Channel")
-//	// ...
-//	handler.close() // this will close the stream.
 func (bus *transportEventBus) ListenStreamForDestination(channelName string, destId *uuid.UUID) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, false, false, destId, false)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.ResponseDir,
+		destinationId:      destId,
+		requireDestination: true,
+	})
 }
 
-// ListenRequestStream Listen to a stream of RequestDir (outbound) messages on Channel. Will keep on ticking until closed.
-// Returns MessageHandler
-//
-//	// To close an open stream.
-//	handler, Err := bus.ListenRequestStream("my-Channel")
-//	// ...
-//	handler.close() // this will close the stream.
 func (bus *transportEventBus) ListenRequestStream(channelName string) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.RequestDir, true, false, nil, false)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction: model.RequestDir,
+		ignoreId:  true,
+	})
 }
 
-// ListenRequestStreamForDestination Listen to a stream of RequestDir (outbound) messages on Channel for a specific DestinationId.
-// Will keep on ticking until closed, returns MessageHandler
-//
-//	// To close an open stream.
-//	handler, Err := bus.ListenRequestStream("my-Channel")
-//	// ...
-//	handler.close() // this will close the stream.
 func (bus *transportEventBus) ListenRequestStreamForDestination(
 	channelName string, destId *uuid.UUID) (MessageHandler, error) {
 
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.RequestDir, false, false, destId, false)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.RequestDir,
+		destinationId:      destId,
+		requireDestination: true,
+	})
 }
 
-// ListenRequestOnce Listen for a single RequestDir (outbound) messages on Channel. Handler is closed after a single event.
-// Returns MessageHandler
 func (bus *transportEventBus) ListenRequestOnce(channelName string) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	id := checkForSuppliedId(nil)
-	messageHandler := bus.wrapMessageHandler(channel, model.RequestDir, true, false, id, true)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:           model.RequestDir,
+		ignoreId:            true,
+		runOnce:             true,
+		generateDestination: true,
+	})
 }
 
-// ListenRequestOnceForDestination Listen for a single RequestDir (outbound) messages on Channel with a specific DestinationId.
-// Handler is closed after a single event, returns MessageHandler
 func (bus *transportEventBus) ListenRequestOnceForDestination(
 	channelName string, destId *uuid.UUID) (MessageHandler, error) {
 
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.RequestDir, false, false, destId, true)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.RequestDir,
+		destinationId:      destId,
+		runOnce:            true,
+		requireDestination: true,
+	})
 }
 
-// ListenFirehose pull in everything being fired on a channel.
 func (bus *transportEventBus) ListenFirehose(channelName string) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.RequestDir, true, true, nil, false)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:  model.RequestDir,
+		ignoreId:   true,
+		allTraffic: true,
+	})
 }
 
-// ListenOnce Will listen for a single ResponseDir message on the Channel before un-subscribing automatically.
 func (bus *transportEventBus) ListenOnce(channelName string) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	id := checkForSuppliedId(nil)
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, true, false, id, true)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:           model.ResponseDir,
+		ignoreId:            true,
+		runOnce:             true,
+		generateDestination: true,
+	})
 }
 
-// ListenOnceForDestination Will listen for a single ResponseDir message on the Channel before un-subscribing automatically.
 func (bus *transportEventBus) ListenOnceForDestination(channelName string, destId *uuid.UUID) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, false, false, destId, true)
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.ResponseDir,
+		destinationId:      destId,
+		runOnce:            true,
+		requireDestination: true,
+	})
 }
 
-// RequestOnce Send a request message with Payload and wait for and Handle a single response message.
-// Returns MessageHandler or error if the Channel is unknown
-func (bus *transportEventBus) RequestOnce(channelName string, payload interface{}) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	destId := checkForSuppliedId(nil)
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, true, false, destId, true)
-	config := buildConfig(channelName, payload, destId)
-	message := model.GenerateRequest(config)
-	messageHandler.requestMessage = message
-	return messageHandler, nil
+func (bus *transportEventBus) RequestOnce(channelName string, payload any) (MessageHandler, error) {
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:           model.ResponseDir,
+		ignoreId:            true,
+		runOnce:             true,
+		generateDestination: true,
+		requestPayload:      payload,
+		withRequest:         true,
+	})
 }
 
-// RequestOnceForDestination Send a request message with Payload and wait for and Handle a single response message for a targeted DestinationId
-// Returns MessageHandler or error if the Channel is unknown
 func (bus *transportEventBus) RequestOnceForDestination(
-	channelName string, payload interface{}, destId *uuid.UUID) (MessageHandler, error) {
+	channelName string, payload any, destId *uuid.UUID) (MessageHandler, error) {
 
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, false, false, destId, true)
-	config := buildConfig(channelName, payload, destId)
-	message := model.GenerateRequest(config)
-	messageHandler.requestMessage = message
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.ResponseDir,
+		destinationId:      destId,
+		runOnce:            true,
+		requireDestination: true,
+		requestPayload:     payload,
+		withRequest:        true,
+	})
 }
 
-func getChannelFromManager(bus *transportEventBus, channelName string) (*Channel, error) {
-	channelManager := bus.ChannelManager
-	channel, err := channelManager.GetChannel(channelName)
-	return channel, err
+func (bus *transportEventBus) RequestStream(channelName string, payload any) (MessageHandler, error) {
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:           model.ResponseDir,
+		ignoreId:            true,
+		generateDestination: true,
+		requestPayload:      payload,
+		withRequest:         true,
+	})
 }
 
-// RequestStream Send a request message with Payload and wait for and Handle all response messages.
-// Returns MessageHandler or error if Channel is unknown
-func (bus *transportEventBus) RequestStream(channelName string, payload interface{}) (MessageHandler, error) {
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	id := checkForSuppliedId(nil)
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, true, false, id, false)
-	config := buildConfig(channelName, payload, id)
-	message := model.GenerateRequest(config)
-	messageHandler.requestMessage = message
-	return messageHandler, nil
-}
-
-// RequestStreamForDestination Send a request message with Payload and wait for and Handle all response messages with a supplied DestinationId
-// Returns MessageHandler or error if Channel is unknown
 func (bus *transportEventBus) RequestStreamForDestination(
-	channelName string, payload interface{}, destId *uuid.UUID) (MessageHandler, error) {
+	channelName string, payload any, destId *uuid.UUID) (MessageHandler, error) {
 
-	channel, err := getChannelFromManager(bus, channelName)
-	if err != nil {
-		return nil, err
-	}
-	if destId == nil {
-		return nil, fmt.Errorf("DestinationId cannot be nil")
-	}
-	messageHandler := bus.wrapMessageHandler(channel, model.ResponseDir, false, false, destId, false)
-	config := buildConfig(channelName, payload, destId)
-	message := model.GenerateRequest(config)
-	messageHandler.requestMessage = message
-	return messageHandler, nil
+	return bus.newMessageHandler(channelName, messageHandlerOptions{
+		direction:          model.ResponseDir,
+		destinationId:      destId,
+		requireDestination: true,
+		requestPayload:     payload,
+		withRequest:        true,
+	})
 }
 
-// ConnectBroker Connect to a message broker. If successful, you get a pointer to a Connection. If not, you will get an error.
 func (bus *transportEventBus) ConnectBroker(config *bridge.BrokerConnectorConfig) (conn bridge.Connection, err error) {
-	conn, err = bus.bc.Connect(config, enableLogging)
+	conn, err = bus.bc.Connect(config, bus.logger.Enabled(context.Background(), slog.LevelDebug))
 	if conn != nil {
-		bus.brokerConnections[conn.GetId()] = conn
+		bus.brokerConnectionsMu.Lock()
+		bus.brokerConnections[*conn.GetId()] = conn
+		bus.brokerConnectionsMu.Unlock()
 	}
 	return
 }
 
-// Start a new Fabric Endpoint
-func (bus *transportEventBus) StartFabricEndpoint(
-	connectionListener stompserver.RawConnectionListener, config EndpointConfig) error {
-
-	if bus.fabEndpoint != nil {
-		//return nil
-		return fmt.Errorf("unable to start: fabric endpoint is already running")
-	}
-	if configErr := config.validate(); configErr != nil {
-		return configErr
-	}
-
-	// start the store sync service the first time a fabric endpoint
-	// is started.
-	bus.initStoreSync.Do(func() {
-		bus.storeSyncService = newStoreSyncService(bus)
-	})
-
-	bus.fabEndpoint = newFabricEndpoint(bus, connectionListener, config)
-	bus.fabEndpoint.Start()
-	return nil
-}
-
-func (bus *transportEventBus) StopFabricEndpoint() error {
-	fe := bus.fabEndpoint
-	if fe == nil {
-		return fmt.Errorf("unable to stop: fabric endpoint is not running")
-	}
-	bus.fabEndpoint = nil
-	fe.Stop()
-	return nil
-}
-
-func (bus *transportEventBus) CreateAsyncTransaction() BusTransaction {
-	return newBusTransaction(bus, asyncTransaction)
-}
-
-func (bus *transportEventBus) CreateSyncTransaction() BusTransaction {
-	return newBusTransaction(bus, syncTransaction)
-}
-
 func (bus *transportEventBus) SendMonitorEvent(
-	evtType MonitorEventType, entityName string, payload interface{}) {
+	evtType MonitorEventType, entityName string, payload any) {
 
 	bus.monitor.sendEvent(NewMonitorEvent(evtType, entityName, payload))
 }
@@ -523,61 +404,67 @@ func (bus *transportEventBus) wrapMessageHandler(
 		messageHandler.invokeOnce = &sync.Once{}
 	}
 
-	errorHandler := func(err error) {
+	errorHandler := func(ctx context.Context, err error) {
 		if messageHandler.errorHandler != nil {
+			if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
+				return
+			}
 			if runOnce {
 				messageHandler.invokeOnce.Do(func() {
 					atomic.AddInt64(&messageHandler.runCount, 1)
-					messageHandler.errorHandler(err)
-
-					bus.GetChannelManager().UnsubscribeChannelHandler(
-						channel.Name, messageHandler.subscriptionId)
+					messageHandler.errorHandler(ctx, err)
 				})
 			} else {
 				atomic.AddInt64(&messageHandler.runCount, 1)
-				messageHandler.errorHandler(err)
+				messageHandler.errorHandler(ctx, err)
 			}
 		}
 	}
-	successHandler := func(msg *model.Message) {
+	successHandler := func(ctx context.Context, msg *model.Message) {
 		if messageHandler.successHandler != nil {
+			if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
+				return
+			}
 			if runOnce {
 				messageHandler.invokeOnce.Do(func() {
 					atomic.AddInt64(&messageHandler.runCount, 1)
-					messageHandler.successHandler(msg)
-
-					bus.GetChannelManager().UnsubscribeChannelHandler(
-						channel.Name, messageHandler.subscriptionId)
+					messageHandler.successHandler(ctx, msg)
 				})
 			} else {
 				atomic.AddInt64(&messageHandler.runCount, 1)
-				messageHandler.successHandler(msg)
+				messageHandler.successHandler(ctx, msg)
 			}
 		}
 	}
 
-	handlerWrapper := func(msg *model.Message) {
+	handlerWrapper := func(ctx context.Context, msg *model.Message) {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		dir := direction
 		id := messageHandler.destination
 		if allTraffic {
 			if msg.Direction == model.ErrorDir {
-				errorHandler(msg.Error)
+				errorHandler(ctx, msg.Error)
 			} else {
-				successHandler(msg)
+				successHandler(ctx, msg)
 			}
 		} else {
 			if msg.Direction == dir {
 				// if we're checking for specific traffic, check a DestinationId match is required.
 				if !messageHandler.ignoreId &&
-					(msg.DestinationId != nil && id != nil) && (id.String() == msg.DestinationId.String()) {
-					successHandler(msg)
+					(msg.DestinationId != nil && id != nil) && (*id == *msg.DestinationId) {
+					successHandler(ctx, msg)
 				}
 				if messageHandler.ignoreId {
-					successHandler(msg)
+					successHandler(ctx, msg)
 				}
 			}
 			if msg.Direction == model.ErrorDir {
-				errorHandler(msg.Error)
+				errorHandler(ctx, msg.Error)
 			}
 		}
 	}
@@ -586,7 +473,60 @@ func (bus *transportEventBus) wrapMessageHandler(
 	return messageHandler
 }
 
-func checkForSuppliedId(id *uuid.UUID) *uuid.UUID {
+func (bus *transportEventBus) sendMessageContext(ctx context.Context, opts sendMessageOptions) error {
+	ctx = normalizeContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	channelObject, err := bus.ChannelManager.GetChannel(opts.channelName)
+	if err != nil {
+		return err
+	}
+
+	var message *model.Message
+	switch opts.direction {
+	case model.RequestDir:
+		message = model.GenerateRequest(buildConfig(opts.channelName, opts.payload, opts.destinationId))
+	case model.ResponseDir:
+		message = model.GenerateResponse(buildConfig(opts.channelName, opts.payload, opts.destinationId))
+	case model.ErrorDir:
+		message = model.GenerateError(buildError(opts.channelName, opts.err, opts.destinationId))
+	default:
+		return fmt.Errorf("unsupported message direction %d", opts.direction)
+	}
+
+	channelObject.SendContext(ctx, message)
+	return nil
+}
+
+func (bus *transportEventBus) newMessageHandler(channelName string, opts messageHandlerOptions) (MessageHandler, error) {
+	channel, err := bus.ChannelManager.GetChannel(channelName)
+	if err != nil {
+		return nil, err
+	}
+	if opts.requireDestination && opts.destinationId == nil {
+		return nil, fmt.Errorf("DestinationId cannot be nil")
+	}
+	if opts.generateDestination {
+		opts.destinationId = getOrNewId(opts.destinationId)
+	}
+
+	messageHandler := bus.wrapMessageHandler(
+		channel,
+		opts.direction,
+		opts.ignoreId,
+		opts.allTraffic,
+		opts.destinationId,
+		opts.runOnce)
+	if opts.withRequest {
+		messageHandler.requestMessage = model.GenerateRequest(
+			buildConfig(channelName, opts.requestPayload, opts.destinationId))
+	}
+	return messageHandler, nil
+}
+
+func getOrNewId(id *uuid.UUID) *uuid.UUID {
 	if id == nil {
 		i := uuid.New()
 		id = &i
@@ -594,11 +534,14 @@ func checkForSuppliedId(id *uuid.UUID) *uuid.UUID {
 	return id
 }
 
-func sendMessageToChannel(channelObject *Channel, message *model.Message) {
-	channelObject.Send(message)
+func normalizeContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
-func buildConfig(channelName string, payload interface{}, destinationId *uuid.UUID) *model.MessageConfig {
+func buildConfig(channelName string, payload any, destinationId *uuid.UUID) *model.MessageConfig {
 	config := new(model.MessageConfig)
 	id := uuid.New()
 	config.Id = &id
@@ -621,6 +564,7 @@ func buildError(channelName string, err error, destinationId *uuid.UUID) *model.
 func createMessageHandler(channel *Channel, destinationId *uuid.UUID, channelMgr ChannelManager) *messageHandler {
 	messageHandler := new(messageHandler)
 	messageHandler.channel = channel
+	messageHandler.handlerContext = context.Background()
 	id := uuid.New()
 	messageHandler.id = &id
 	messageHandler.destination = destinationId

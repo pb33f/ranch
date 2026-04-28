@@ -7,23 +7,21 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/services"
 	"github.com/pb33f/ranch/service"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context/ctxhttp"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNewPlatformServer(t *testing.T) {
-	bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
@@ -31,8 +29,6 @@ func TestNewPlatformServer(t *testing.T) {
 }
 
 func TestNewPlatformServer_EmptyRootDir(t *testing.T) {
-	bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	newConfig := GetBasicTestServerConfig("", "stdout", "stdout", "stderr", port, true)
 	NewPlatformServer(newConfig)
@@ -41,21 +37,18 @@ func TestNewPlatformServer_EmptyRootDir(t *testing.T) {
 }
 
 func TestPlatformServer_StartServer(t *testing.T) {
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
-	ps.(*platformServer).eventbus = newBus
 	syschan := make(chan os.Signal, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go ps.StartServer(syschan)
-	RunWhenServerReady(t, newBus, func(t2 *testing.T) {
+	go func() { assert.NoError(t, ps.StartServer(context.Background(), syschan)) }()
+	RunWhenPlatformServerReady(t, ps, func(t2 *testing.T) {
 		rsp, err := http.Get(fmt.Sprintf("http://localhost:%d", port))
 		assert.Nil(t, err)
 
-		_, err = ioutil.ReadAll(rsp.Body)
+		_, err = io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Equal(t, 404, rsp.StatusCode)
 		ps.StopServer()
@@ -65,26 +58,65 @@ func TestPlatformServer_StartServer(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPlatformServer_Ready_AfterHttpOnly(t *testing.T) {
+	port := GetTestPort()
+	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
+	config.FabricConfig = nil
+	ps := NewPlatformServer(config)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- ps.StartServer(ctx, make(chan os.Signal, 1))
+	}()
+
+	select {
+	case <-ps.Ready():
+		assert.Nil(t, ps.GetStompServer())
+	case <-time.After(time.Second):
+		t.Fatal("server did not become ready")
+	}
+
+	cancel()
+	assert.NoError(t, <-done)
+}
+
+func TestPlatformServer_Ready_AfterFabric(t *testing.T) {
+	port := GetTestPort()
+	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
+	config.FabricConfig = GetTestFabricBrokerConfig()
+	ps := NewPlatformServer(config)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- ps.StartServer(ctx, make(chan os.Signal, 1))
+	}()
+
+	select {
+	case <-ps.Ready():
+		assert.NotNil(t, ps.GetStompServer())
+	case <-time.After(time.Second):
+		t.Fatal("server did not become ready")
+	}
+
+	cancel()
+	assert.NoError(t, <-done)
+}
+
 func TestPlatformServer_RegisterService(t *testing.T) {
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
-	ps.(*platformServer).eventbus = newBus
 
 	err := ps.RegisterService(services.NewPingPongService(), services.PingPongServiceChan)
 	assert.Nil(t, err)
 }
 
 func TestPlatformServer_SetHttpPathPrefixChannelBridge(t *testing.T) {
-	// get a new bus instance and create a new platform server instance
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
-	ps.(*platformServer).eventbus = newBus
 
 	// register a service
 	_ = ps.RegisterService(services.NewPingPongService(), services.PingPongServiceChan)
@@ -105,20 +137,20 @@ func TestPlatformServer_SetHttpPathPrefixChannelBridge(t *testing.T) {
 	syschan := make(chan os.Signal, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go ps.StartServer(syschan)
-	RunWhenServerReady(t, newBus, func(t2 *testing.T) {
+	go func() { assert.NoError(t, ps.StartServer(context.Background(), syschan)) }()
+	RunWhenPlatformServerReady(t, ps, func(t2 *testing.T) {
 		// GET
 		rsp, err := http.Get(fmt.Sprintf("http://localhost:%d/ping-pong", port))
 		assert.Nil(t, err)
 
-		body, err := ioutil.ReadAll(rsp.Body)
+		body, err := io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Contains(t, string(body), "hello")
 
 		// POST
 		rsp, err = http.Post(fmt.Sprintf("http://localhost:%d/ping-pong", port), "application/json", strings.NewReader(""))
 		assert.Nil(t, err)
-		body, err = ioutil.ReadAll(rsp.Body)
+		body, err = io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Contains(t, string(body), "hello")
 
@@ -126,12 +158,12 @@ func TestPlatformServer_SetHttpPathPrefixChannelBridge(t *testing.T) {
 		req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://localhost:%d/ping-pong", port), strings.NewReader(""))
 		rsp, err = ctxhttp.Do(context.Background(), http.DefaultClient, req)
 		assert.Nil(t, err)
-		body, err = ioutil.ReadAll(rsp.Body)
+		body, err = io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Contains(t, string(body), "hello")
 
 		ps.StopServer()
-		service.GetServiceRegistry().UnregisterService(services.PingPongServiceChan)
+		_ = ps.UnregisterService(services.PingPongServiceChan)
 		wg.Done()
 	})
 
@@ -139,27 +171,24 @@ func TestPlatformServer_SetHttpPathPrefixChannelBridge(t *testing.T) {
 }
 
 func TestPlatformServer_SetHttpChannelBridge(t *testing.T) {
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
-	ps.(*platformServer).eventbus = newBus
 	_ = ps.RegisterService(services.NewPingPongService(), services.PingPongServiceChan)
 
 	syschan := make(chan os.Signal, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go ps.StartServer(syschan)
-	RunWhenServerReady(t, newBus, func(t2 *testing.T) {
+	go func() { assert.NoError(t, ps.StartServer(context.Background(), syschan)) }()
+	RunWhenPlatformServerReady(t, ps, func(t2 *testing.T) {
 		rsp, err := http.Get(fmt.Sprintf("http://localhost:%d/rest/ping-pong2?message=hello", port))
 		assert.Nil(t, err)
 
-		body, err := ioutil.ReadAll(rsp.Body)
+		body, err := io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Contains(t, string(body), "hello")
 		ps.StopServer()
-		service.GetServiceRegistry().UnregisterService(services.PingPongServiceChan)
+		_ = ps.UnregisterService(services.PingPongServiceChan)
 		wg.Done()
 	})
 
@@ -167,25 +196,22 @@ func TestPlatformServer_SetHttpChannelBridge(t *testing.T) {
 }
 
 func TestPlatformServer_UnknownRequest(t *testing.T) {
-	newBus := bus.ResetBus()
-	service.ResetServiceRegistry()
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config)
-	ps.(*platformServer).eventbus = newBus
 	_ = ps.RegisterService(services.NewPingPongService(), services.PingPongServiceChan)
-	defer service.GetServiceRegistry().UnregisterService(services.PingPongServiceChan)
+	defer func() { _ = ps.UnregisterService(services.PingPongServiceChan) }()
 	setupBridge(ps, "/ping", "GET", services.PingPongServiceChan, "bubble")
 
 	syschan := make(chan os.Signal, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go ps.StartServer(syschan)
-	RunWhenServerReady(t, newBus, func(t2 *testing.T) {
+	go func() { assert.NoError(t, ps.StartServer(context.Background(), syschan)) }()
+	RunWhenPlatformServerReady(t, ps, func(t2 *testing.T) {
 		rsp, err := http.Get(fmt.Sprintf("http://localhost:%d/ping?msg=hello", port))
 		assert.Nil(t, err)
 
-		body, err := ioutil.ReadAll(rsp.Body)
+		body, err := io.ReadAll(rsp.Body)
 		assert.Nil(t, err)
 		assert.Contains(t, string(body), "unsupported request")
 

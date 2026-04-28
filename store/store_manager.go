@@ -1,20 +1,23 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
 	"fmt"
-	"github.com/go-stomp/stomp/v3/frame"
-	"github.com/google/uuid"
-	"github.com/pb33f/ranch/bridge"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
+
+	"github.com/go-stomp/stomp/v3/frame"
+	"github.com/google/uuid"
+	"github.com/pb33f/ranch/bridge"
+	"github.com/pb33f/ranch/bus"
 )
 
-// StoreManager interface controls all access to BusStores
-type StoreManager interface {
+// Manager controls all access to BusStores.
+type Manager interface {
 	// Create a new Store, if the store already exists, then it will be returned.
 	CreateStore(name string) BusStore
 	// Create a new Store and use the itemType to deserialize item values when handling
@@ -51,16 +54,27 @@ type storeSyncChannelConfig struct {
 type storeManager struct {
 	stores           map[string]BusStore
 	storesLock       sync.RWMutex
-	eventBus         EventBus
+	eventBus         bus.EventBus
+	logger           *slog.Logger
 	syncChannelsLock sync.RWMutex
 	syncChannels     map[uuid.UUID]*storeSyncChannelConfig
+	syncService      *storeSyncService
 }
 
-func newStoreManager(eventBus EventBus) StoreManager {
+func NewManager(eventBus bus.EventBus) Manager {
+	return NewManagerWithLogger(eventBus, nil)
+}
+
+func NewManagerWithLogger(eventBus bus.EventBus, logger *slog.Logger) Manager {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	m := new(storeManager)
 	m.stores = make(map[string]BusStore)
 	m.syncChannels = make(map[uuid.UUID]*storeSyncChannelConfig)
 	m.eventBus = eventBus
+	m.logger = logger
+	m.syncService = newStoreSyncService(eventBus, m, logger)
 
 	return m
 }
@@ -79,7 +93,7 @@ func (m *storeManager) CreateStoreWithType(name string, itemType reflect.Type) B
 		return store
 	}
 
-	m.stores[name] = newBusStore(name, m.eventBus, itemType, nil)
+	m.stores[name] = newBusStore(name, m.eventBus, itemType, nil, m.logger)
 	go m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
 	return m.stores[name]
 }
@@ -134,7 +148,9 @@ func (m *storeManager) ConfigureStoreSyncChannel(
 	m.syncChannels[*conn.GetId()] = storeSyncChannelConfig
 
 	m.eventBus.GetChannelManager().CreateChannel(syncChannel)
-	m.eventBus.GetChannelManager().MarkChannelAsGalactic(syncChannel, topicPrefix+syncChannel, conn)
+	if err := m.eventBus.GetChannelManager().MarkChannelAsGalactic(syncChannel, topicPrefix+syncChannel, conn); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -169,7 +185,7 @@ func (m *storeManager) OpenGalacticStoreWithItemType(
 
 	m.stores[name] = newBusStore(name, m.eventBus, itemType, &galacticStoreConfig{
 		syncChannelConfig: chanConf,
-	})
+	}, m.logger)
 	go m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
 	return m.stores[name], nil
 }

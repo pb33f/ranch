@@ -1,38 +1,43 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package tx
 
 import (
+	"context"
 	"fmt"
+
 	"github.com/google/uuid"
+	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/store"
 	"sync"
 )
 
-type transactionType int
+type TransactionType int
 
 const (
-	asyncTransaction transactionType = iota
-	syncTransaction
+	AsyncTransaction TransactionType = iota
+	SyncTransaction
 )
 
-type BusTransactionReadyFunction func(responses []*model.Message)
+type ReadyFunction func(responses []*model.Message)
 
-type BusTransaction interface {
+type Transaction interface {
 	// Sends a request to a channel as a part of this transaction.
-	SendRequest(channel string, payload interface{}) error
+	SendRequest(channel string, payload any) error
 	//  Wait for a store to be initialized as a part of this transaction.
 	WaitForStoreReady(storeName string) error
 	// Registers a new complete handler. Once all responses to requests have been received,
 	// the transaction is complete.
-	OnComplete(completeHandler BusTransactionReadyFunction) error
+	OnComplete(completeHandler ReadyFunction) error
 	// Register a new error handler. If an error is thrown by any of the responders, the transaction
 	// is aborted and the error sent to the registered errorHandlers.
-	OnError(errorHandler MessageErrorFunction) error
+	OnError(errorHandler bus.MessageErrorFunction) error
 	// Commit the transaction, all requests will be sent and will wait for responses.
 	// Once all the responses are in, onComplete handlers will be called with the responses.
 	Commit() error
+	CommitContext(ctx context.Context) error
 }
 
 type transactionState int
@@ -48,30 +53,33 @@ type busTransactionRequest struct {
 	requestIndex int
 	storeName    string
 	channelName  string
-	payload      interface{}
+	payload      any
 }
 
 type busTransaction struct {
-	transactionType    transactionType
+	transactionType    TransactionType
 	state              transactionState
 	lock               sync.Mutex
 	requests           []*busTransactionRequest
 	responses          []*model.Message
-	onCompleteHandlers []BusTransactionReadyFunction
-	onErrorHandlers    []MessageErrorFunction
-	bus                EventBus
+	onCompleteHandlers []ReadyFunction
+	onErrorHandlers    []bus.MessageErrorFunction
+	bus                bus.EventBus
+	storeManager       store.Manager
+	ctx                context.Context
 	completedRequests  int
 }
 
-func newBusTransaction(bus EventBus, transactionType transactionType) BusTransaction {
+func New(eventBus bus.EventBus, storeManager store.Manager, transactionType TransactionType) Transaction {
 	transaction := new(busTransaction)
 
-	transaction.bus = bus
+	transaction.bus = eventBus
+	transaction.storeManager = storeManager
 	transaction.state = uncommittedState
 	transaction.transactionType = transactionType
 	transaction.requests = make([]*busTransactionRequest, 0)
-	transaction.onCompleteHandlers = make([]BusTransactionReadyFunction, 0)
-	transaction.onErrorHandlers = make([]MessageErrorFunction, 0)
+	transaction.onCompleteHandlers = make([]ReadyFunction, 0)
+	transaction.onErrorHandlers = make([]bus.MessageErrorFunction, 0)
 	transaction.completedRequests = 0
 
 	return transaction
@@ -84,7 +92,7 @@ func (tr *busTransaction) checkUncommittedState() error {
 	return nil
 }
 
-func (tr *busTransaction) SendRequest(channel string, payload interface{}) error {
+func (tr *busTransaction) SendRequest(channel string, payload any) error {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 
@@ -109,7 +117,7 @@ func (tr *busTransaction) WaitForStoreReady(storeName string) error {
 		return err
 	}
 
-	if tr.bus.GetStoreManager().GetStore(storeName) == nil {
+	if tr.storeManager.GetStore(storeName) == nil {
 		return fmt.Errorf("cannot find store '%s'", storeName)
 	}
 
@@ -121,7 +129,7 @@ func (tr *busTransaction) WaitForStoreReady(storeName string) error {
 	return nil
 }
 
-func (tr *busTransaction) OnComplete(completeHandler BusTransactionReadyFunction) error {
+func (tr *busTransaction) OnComplete(completeHandler ReadyFunction) error {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 
@@ -133,7 +141,7 @@ func (tr *busTransaction) OnComplete(completeHandler BusTransactionReadyFunction
 	return nil
 }
 
-func (tr *busTransaction) OnError(errorHandler MessageErrorFunction) error {
+func (tr *busTransaction) OnError(errorHandler bus.MessageErrorFunction) error {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 
@@ -146,50 +154,76 @@ func (tr *busTransaction) OnError(errorHandler MessageErrorFunction) error {
 }
 
 func (tr *busTransaction) Commit() error {
+	return tr.CommitContext(context.Background())
+}
+
+func (tr *busTransaction) CommitContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	tr.lock.Lock()
-	defer tr.lock.Unlock()
 
 	if err := tr.checkUncommittedState(); err != nil {
+		tr.lock.Unlock()
 		return err
 	}
 
 	if len(tr.requests) == 0 {
+		tr.lock.Unlock()
 		return fmt.Errorf("cannot commit empty transaction")
 	}
 
 	tr.state = committedState
+	tr.ctx = ctx
 
 	// init responses slice
 	tr.responses = make([]*model.Message, len(tr.requests))
+	transactionType := tr.transactionType
+	tr.lock.Unlock()
 
-	if tr.transactionType == asyncTransaction {
-		tr.startAsyncTransaction()
+	if done := ctx.Done(); done != nil {
+		go func() {
+			<-done
+			tr.onTransactionError(ctx.Err())
+		}()
+	}
+
+	if transactionType == AsyncTransaction {
+		tr.startAsyncTransaction(ctx)
 	} else {
-		tr.startSyncTransaction()
+		tr.startSyncTransaction(ctx)
 	}
 
 	return nil
 }
 
-func (tr *busTransaction) startSyncTransaction() {
-	tr.executeRequest(tr.requests[0])
+func (tr *busTransaction) startSyncTransaction(ctx context.Context) {
+	tr.executeRequest(ctx, tr.requests[0])
 }
 
-func (tr *busTransaction) executeRequest(request *busTransactionRequest) {
+func (tr *busTransaction) executeRequest(ctx context.Context, request *busTransactionRequest) {
+	if err := ctx.Err(); err != nil {
+		tr.onTransactionError(err)
+		return
+	}
 	if request.storeName != "" {
-		tr.waitForStore(request)
+		tr.waitForStore(ctx, request)
 	} else {
-		tr.sendRequest(request)
+		tr.sendRequest(ctx, request)
 	}
 }
 
-func (tr *busTransaction) startAsyncTransaction() {
+func (tr *busTransaction) startAsyncTransaction(ctx context.Context) {
 	for _, req := range tr.requests {
-		tr.executeRequest(req)
+		tr.executeRequest(ctx, req)
 	}
 }
 
-func (tr *busTransaction) sendRequest(req *busTransactionRequest) {
+func (tr *busTransaction) sendRequest(ctx context.Context, req *busTransactionRequest) {
 	reqId := uuid.New()
 
 	mh, err := tr.bus.ListenOnceForDestination(req.channelName, &reqId)
@@ -198,20 +232,43 @@ func (tr *busTransaction) sendRequest(req *busTransactionRequest) {
 		return
 	}
 
-	mh.Handle(func(message *model.Message) {
+	var closeOnce sync.Once
+	listenerDone := make(chan struct{})
+	closeListener := func() {
+		closeOnce.Do(func() {
+			mh.Close()
+			close(listenerDone)
+		})
+	}
+	mh.HandleContext(ctx, func(_ context.Context, message *model.Message) {
+		closeListener()
 		tr.onTransactionRequestSuccess(req, message)
-	}, func(e error) {
+	}, func(_ context.Context, e error) {
+		closeListener()
 		tr.onTransactionError(e)
 	})
 
-	tr.bus.SendRequestMessage(req.channelName, req.payload, &reqId)
+	if done := ctx.Done(); done != nil {
+		go func() {
+			select {
+			case <-done:
+				closeListener()
+			case <-listenerDone:
+			}
+		}()
+	}
+
+	if err := tr.bus.SendRequestMessageContext(ctx, req.channelName, req.payload, &reqId); err != nil {
+		closeListener()
+		tr.onTransactionError(err)
+	}
 }
 
 func (tr *busTransaction) onTransactionError(err error) {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 
-	if tr.state == abortedState {
+	if tr.state == abortedState || tr.state == completedState {
 		return
 	}
 
@@ -221,13 +278,21 @@ func (tr *busTransaction) onTransactionError(err error) {
 	}
 }
 
-func (tr *busTransaction) waitForStore(req *busTransactionRequest) {
-	store := tr.bus.GetStoreManager().GetStore(req.storeName)
+func (tr *busTransaction) waitForStore(ctx context.Context, req *busTransactionRequest) {
+	store := tr.storeManager.GetStore(req.storeName)
 	if store == nil {
 		tr.onTransactionError(fmt.Errorf("cannot find store '%s'", req.storeName))
 		return
 	}
+	if err := ctx.Err(); err != nil {
+		tr.onTransactionError(err)
+		return
+	}
 	store.WhenReady(func() {
+		if err := ctx.Err(); err != nil {
+			tr.onTransactionError(err)
+			return
+		}
 		tr.onTransactionRequestSuccess(req, &model.Message{
 			Direction: model.ResponseDir,
 			Payload:   store.AllValuesAsMap(),
@@ -262,7 +327,7 @@ func (tr *busTransaction) onTransactionRequestSuccess(req *busTransactionRequest
 	}
 
 	// If this is a sync transaction execute the next request
-	if tr.transactionType == syncTransaction && req.requestIndex < len(tr.requests)-1 {
-		tr.executeRequest(tr.requests[req.requestIndex+1])
+	if tr.transactionType == SyncTransaction && req.requestIndex < len(tr.requests)-1 {
+		tr.executeRequest(tr.ctx, tr.requests[req.requestIndex+1])
 	}
 }

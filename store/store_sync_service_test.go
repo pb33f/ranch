@@ -1,11 +1,13 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
 	"github.com/google/uuid"
+	buspkg "github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
+	"github.com/pb33f/ranch/transport/fabric"
 	"github.com/stretchr/testify/assert"
 	"reflect"
 	"strings"
@@ -13,28 +15,29 @@ import (
 	"testing"
 )
 
-func testStoreSyncService() (*storeSyncService, EventBus) {
-	bus := newTestEventBus()
-	return newStoreSyncService(bus), bus
+func testStoreSyncService() (*storeSyncService, buspkg.EventBus, Manager) {
+	b := buspkg.NewEventBus()
+	manager := NewManager(b).(*storeManager)
+	return manager.syncService, b, manager
 }
 
 func TestStoreSyncService_NewConnection(t *testing.T) {
-	service, bus := testStoreSyncService()
+	service, bus, _ := testStoreSyncService()
 
 	// verify that the service ignores non transport-store-sync events
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, "galactic-channel", nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, "galactic-channel", nil)
 	assert.Equal(t, len(service.syncClients), 0)
 
 	syncChan := "transport-store-sync.1"
 
 	bus.GetChannelManager().CreateChannel(syncChan)
 
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 	assert.Equal(t, len(service.syncClients), 1)
 }
 
 func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
-	_, bus := testStoreSyncService()
+	_, bus, _ := testStoreSyncService()
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
@@ -49,19 +52,19 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 		assert.Fail(t, "Unexpected error")
 	})
 
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 	id := uuid.New()
-	bus.SendRequestMessage(syncChan, "invalid-request", nil)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, "invalid-request", nil)
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
 		Payload:        "invalid-payload",
 		Id:             &id,
 	}, nil)
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        make(map[string]interface{}),
+		Payload:        make(map[string]any),
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -71,9 +74,9 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 	assert.Equal(t, errors[0].ErrorMessage, "Invalid OpenStoreRequest")
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "non-existing-store"},
+		Payload:        map[string]any{"storeId": "non-existing-store"},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -84,11 +87,11 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 }
 
 func TestStoreSyncService_OpenStore(t *testing.T) {
-	service, bus := testStoreSyncService()
+	service, bus, storeManager := testStoreSyncService()
 
-	store := bus.GetStoreManager().CreateStoreWithType(
+	store := storeManager.CreateStoreWithType(
 		"test-store", reflect.TypeOf(&MockStoreItem{}))
-	store.Populate(map[string]interface{}{
+	_ = store.Populate(map[string]any{
 		"item1": &MockStoreItem{From: "test", Message: "test-message"},
 		"item2": &MockStoreItem{From: "test2", Message: uuid.New().String()},
 	})
@@ -96,10 +99,10 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
 
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	wg := sync.WaitGroup{}
-	var syncResp []interface{}
+	var syncResp []any
 
 	mh, _ := bus.ListenStream(syncChan)
 	mh.Handle(func(message *model.Message) {
@@ -110,9 +113,9 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	})
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -120,7 +123,7 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	assert.Equal(t, len(service.syncStoreListeners), 1)
 	assert.Equal(t, service.syncStoreListeners["test-store"].clientSyncChannels[syncChan], true)
 
-	resp := syncResp[0].(*model.StoreContentResponse)
+	resp := syncResp[0].(*StoreContentResponse)
 
 	assert.Equal(t, resp.StoreId, "test-store")
 	items, version := store.AllValuesAndVersion()
@@ -130,22 +133,22 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	assert.Equal(t, resp.ResponseType, "storeContentResponse")
 
 	// try subscribing to the same sync channel again
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 	assert.Equal(t, len(service.syncClients[syncChan].openStores), 1)
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
 	assert.Equal(t, len(syncResp), 2)
-	assert.Equal(t, syncResp[1].(*model.StoreContentResponse).ResponseType, "storeContentResponse")
+	assert.Equal(t, syncResp[1].(*StoreContentResponse).ResponseType, "storeContentResponse")
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	mh2, _ := bus.ListenStream(syncChan2)
 	mh2.Handle(func(message *model.Message) {
@@ -156,14 +159,14 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	})
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
 	assert.Equal(t, len(syncResp), 3)
-	assert.Equal(t, syncResp[2].(*model.StoreContentResponse).ResponseType, "storeContentResponse")
+	assert.Equal(t, syncResp[2].(*StoreContentResponse).ResponseType, "storeContentResponse")
 
 	assert.Equal(t, len(service.syncClients), 2)
 	assert.Equal(t, len(service.syncClients[syncChan].openStores), 1)
@@ -173,7 +176,7 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	assert.Equal(t, len(service.syncStoreListeners["test-store"].clientSyncChannels), 2)
 	assert.Equal(t, service.syncStoreListeners["test-store"].clientSyncChannels[syncChan2], true)
 
-	bus.SendMonitorEvent(ChannelDestroyedEvt, syncChan, nil)
+	bus.SendMonitorEvent(buspkg.ChannelDestroyedEvt, syncChan, nil)
 
 	assert.Equal(t, len(service.syncClients), 1)
 	assert.Equal(t, len(service.syncClients[syncChan2].openStores), 1)
@@ -181,35 +184,35 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	assert.Equal(t, len(service.syncStoreListeners["test-store"].clientSyncChannels), 1)
 	assert.Equal(t, service.syncStoreListeners["test-store"].clientSyncChannels[syncChan2], true)
 
-	bus.SendMonitorEvent(ChannelDestroyedEvt, syncChan2, nil)
+	bus.SendMonitorEvent(buspkg.ChannelDestroyedEvt, syncChan2, nil)
 
 	assert.Equal(t, len(service.syncClients), 0)
 	assert.Equal(t, len(service.syncStoreListeners), 0)
 
 	// try closing the syncChan2 again
-	bus.SendMonitorEvent(ChannelDestroyedEvt, syncChan2, nil)
+	bus.SendMonitorEvent(buspkg.ChannelDestroyedEvt, syncChan2, nil)
 }
 
 func TestStoreSyncService_CloseStore(t *testing.T) {
-	service, bus := testStoreSyncService()
+	service, bus, storeManager := testStoreSyncService()
 
-	store := bus.GetStoreManager().CreateStoreWithType(
+	store := storeManager.CreateStoreWithType(
 		"test-store", reflect.TypeOf(&MockStoreItem{}))
-	store.Populate(map[string]interface{}{
+	_ = store.Populate(map[string]any{
 		"item1": &MockStoreItem{From: "test", Message: "test-message"},
 		"item2": &MockStoreItem{From: "test2", Message: uuid.New().String()},
 	})
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	wg := sync.WaitGroup{}
-	var syncResp1 []interface{}
+	var syncResp1 []any
 
 	mh, _ := bus.ListenStream(syncChan)
 	mh.Handle(func(message *model.Message) {
@@ -229,33 +232,33 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 	id := uuid.New()
 
 	wg.Add(2)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
 	assert.Equal(t, len(service.syncStoreListeners["test-store"].clientSyncChannels), 2)
 
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 		Id:             &id,
 	}, nil)
 
 	wg.Add(2)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        make(map[string]interface{}),
+		Payload:        make(map[string]any),
 		Id:             &id,
 	}, nil)
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        map[string]interface{}{"storeId": ""},
+		Payload:        map[string]any{"storeId": ""},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -271,21 +274,21 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 	assert.Equal(t, len(service.syncClients[syncChan2].openStores), 1)
 	service.lock.Unlock()
 
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 		Id:             &id,
 	}, nil)
 
 	wg.Add(2)
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        make(map[string]interface{}),
+		Payload:        make(map[string]any),
 		Id:             &id,
 	}, nil)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: closeStoreRequest,
-		Payload:        map[string]interface{}{"storeId": ""},
+		Payload:        map[string]any{"storeId": ""},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -302,14 +305,14 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 }
 
 func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
-	_, bus := testStoreSyncService()
+	_, bus, _ := testStoreSyncService()
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	wg := sync.WaitGroup{}
-	var syncResp []interface{}
+	var syncResp []any
 
 	mh, _ := bus.ListenStream(syncChan)
 	mh.Handle(func(message *model.Message) {
@@ -322,9 +325,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 	id := uuid.New()
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload:        map[string]interface{}{},
+		Payload:        map[string]any{},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -332,9 +335,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 	assert.Equal(t, syncResp[0].(*model.Response).ErrorMessage, "Invalid UpdateStoreRequest: missing storeId")
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -342,9 +345,9 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 	assert.Equal(t, syncResp[1].(*model.Response).ErrorMessage, "Invalid UpdateStoreRequest: missing itemId")
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store", "itemId": "item1"},
+		Payload:        map[string]any{"storeId": "test-store", "itemId": "item1"},
 		Id:             &id,
 	}, nil)
 	wg.Wait()
@@ -353,26 +356,26 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 }
 
 func TestStoreSyncService_UpdateStore(t *testing.T) {
-	_, bus := testStoreSyncService()
+	_, bus, storeManager := testStoreSyncService()
 
-	store := bus.GetStoreManager().CreateStoreWithType(
+	store := storeManager.CreateStoreWithType(
 		"test-store", reflect.TypeOf(&MockStoreItem{}))
-	store.Populate(map[string]interface{}{
+	_ = store.Populate(map[string]any{
 		"item1": &MockStoreItem{From: "test", Message: "test-message"},
 		"item2": &MockStoreItem{From: "test2", Message: uuid.New().String()},
 	})
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	wg := sync.WaitGroup{}
-	var syncResp1 []interface{}
-	var syncResp2 []interface{}
+	var syncResp1 []any
+	var syncResp2 []any
 
 	mh, _ := bus.ListenStream(syncChan)
 	mh.Handle(func(message *model.Message) {
@@ -391,13 +394,13 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	})
 
 	wg.Add(2)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
-	bus.SendRequestMessage(syncChan2, &model.Request{
+	_ = bus.SendRequestMessage(syncChan2, &model.Request{
 		RequestCommand: openStoreRequest,
-		Payload:        map[string]interface{}{"storeId": "test-store"},
+		Payload:        map[string]any{"storeId": "test-store"},
 	}, nil)
 	wg.Wait()
 
@@ -406,12 +409,12 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 
 	wg.Add(2)
 
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"storeId": "test-store",
 			"itemId":  "item3",
-			"newItemValue": map[string]interface{}{
+			"newItemValue": map[string]any{
 				"From":    "test3",
 				"Message": "test-message3",
 			}},
@@ -422,10 +425,10 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	assert.Equal(t, len(syncResp1), 2)
 	assert.Equal(t, len(syncResp2), 2)
 
-	assert.Equal(t, syncResp1[1].(*model.UpdateStoreResponse).ResponseType, "updateStoreResponse")
-	assert.Equal(t, syncResp1[1].(*model.UpdateStoreResponse).StoreId, "test-store")
-	assert.Equal(t, syncResp1[1].(*model.UpdateStoreResponse).StoreVersion, int64(2))
-	assert.Equal(t, syncResp1[1].(*model.UpdateStoreResponse).NewItemValue, &MockStoreItem{
+	assert.Equal(t, syncResp1[1].(*UpdateStoreResponse).ResponseType, "updateStoreResponse")
+	assert.Equal(t, syncResp1[1].(*UpdateStoreResponse).StoreId, "test-store")
+	assert.Equal(t, syncResp1[1].(*UpdateStoreResponse).StoreVersion, int64(2))
+	assert.Equal(t, syncResp1[1].(*UpdateStoreResponse).NewItemValue, &MockStoreItem{
 		From:    "test3",
 		Message: "test-message3",
 	})
@@ -444,11 +447,11 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	assert.Equal(t, len(syncResp1), 3)
 	assert.Equal(t, len(syncResp2), 3)
 
-	assert.Equal(t, syncResp1[2].(*model.UpdateStoreResponse).ResponseType, "updateStoreResponse")
-	assert.Equal(t, syncResp1[2].(*model.UpdateStoreResponse).StoreId, "test-store")
-	assert.Equal(t, syncResp1[2].(*model.UpdateStoreResponse).ItemId, "item2")
-	assert.Equal(t, syncResp1[2].(*model.UpdateStoreResponse).StoreVersion, int64(3))
-	assert.Equal(t, syncResp1[2].(*model.UpdateStoreResponse).NewItemValue, nil)
+	assert.Equal(t, syncResp1[2].(*UpdateStoreResponse).ResponseType, "updateStoreResponse")
+	assert.Equal(t, syncResp1[2].(*UpdateStoreResponse).StoreId, "test-store")
+	assert.Equal(t, syncResp1[2].(*UpdateStoreResponse).ItemId, "item2")
+	assert.Equal(t, syncResp1[2].(*UpdateStoreResponse).StoreVersion, int64(3))
+	assert.Equal(t, syncResp1[2].(*UpdateStoreResponse).NewItemValue, nil)
 
 	assert.Equal(t, syncResp1[2], syncResp2[2])
 
@@ -459,27 +462,27 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	assert.Equal(t, len(syncResp1), 4)
 	assert.Equal(t, len(syncResp2), 4)
 
-	assert.Equal(t, syncResp1[3].(*model.UpdateStoreResponse).ResponseType, "updateStoreResponse")
-	assert.Equal(t, syncResp1[3].(*model.UpdateStoreResponse).StoreId, "test-store")
-	assert.Equal(t, syncResp1[3].(*model.UpdateStoreResponse).ItemId, "item1")
-	assert.Equal(t, syncResp1[3].(*model.UpdateStoreResponse).StoreVersion, int64(4))
-	assert.Equal(t, syncResp1[3].(*model.UpdateStoreResponse).NewItemValue,
+	assert.Equal(t, syncResp1[3].(*UpdateStoreResponse).ResponseType, "updateStoreResponse")
+	assert.Equal(t, syncResp1[3].(*UpdateStoreResponse).StoreId, "test-store")
+	assert.Equal(t, syncResp1[3].(*UpdateStoreResponse).ItemId, "item1")
+	assert.Equal(t, syncResp1[3].(*UpdateStoreResponse).StoreVersion, int64(4))
+	assert.Equal(t, syncResp1[3].(*UpdateStoreResponse).NewItemValue,
 		&MockStoreItem{From: "u1", Message: "m1"})
 
 	assert.Equal(t, syncResp1[3], syncResp2[3])
 
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"storeId":      "test-store",
 			"itemId":       "item4",
 			"newItemValue": nil},
 	}, nil)
 
 	wg.Add(2)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"storeId":      "test-store",
 			"itemId":       "item3",
 			"newItemValue": nil},
@@ -489,20 +492,20 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 	assert.Equal(t, len(syncResp1), 5)
 	assert.Equal(t, len(syncResp2), 5)
 
-	assert.Equal(t, syncResp1[4].(*model.UpdateStoreResponse).ResponseType, "updateStoreResponse")
-	assert.Equal(t, syncResp1[4].(*model.UpdateStoreResponse).StoreId, "test-store")
-	assert.Equal(t, syncResp1[4].(*model.UpdateStoreResponse).ItemId, "item3")
-	assert.Equal(t, syncResp1[4].(*model.UpdateStoreResponse).StoreVersion, int64(5))
-	assert.Equal(t, syncResp1[4].(*model.UpdateStoreResponse).NewItemValue, nil)
+	assert.Equal(t, syncResp1[4].(*UpdateStoreResponse).ResponseType, "updateStoreResponse")
+	assert.Equal(t, syncResp1[4].(*UpdateStoreResponse).StoreId, "test-store")
+	assert.Equal(t, syncResp1[4].(*UpdateStoreResponse).ItemId, "item3")
+	assert.Equal(t, syncResp1[4].(*UpdateStoreResponse).StoreVersion, int64(5))
+	assert.Equal(t, syncResp1[4].(*UpdateStoreResponse).NewItemValue, nil)
 
 	assert.Equal(t, syncResp1[4], syncResp2[4])
 
 	assert.Equal(t, store.GetValue("item3"), nil)
 
 	wg.Add(1)
-	bus.SendRequestMessage(syncChan, &model.Request{
+	_ = bus.SendRequestMessage(syncChan, &model.Request{
 		RequestCommand: updateStoreRequest,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"storeId":      "test-store",
 			"itemId":       "item3",
 			"newItemValue": "test"},

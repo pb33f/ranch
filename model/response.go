@@ -11,16 +11,16 @@ import (
 type Response struct {
 	Id             *uuid.UUID  `json:"id,omitempty"`
 	Destination    string      `json:"channel,omitempty"`
-	Payload        interface{} `json:"payload,omitempty"`
+	Payload        any `json:"payload,omitempty"`
 	HttpStatusCode int         `json:"httpStatusCode,omitempty"`
 	Error          bool        `json:"error,omitempty"`
 	ErrorCode      int         `json:"errorCode,omitempty"`
 	ErrorMessage   string      `json:"errorMessage,omitempty"`
-	ErrorObject    interface{} `json:"errorObject,omitempty"`
+	ErrorObject    any `json:"errorObject,omitempty"`
 	// If populated the response will be sent to a single client
 	// on the specified destination topic.
 	BrokerDestination *BrokerDestinationConfig `json:"-"`
-	Headers           map[string]interface{}   `json:"-"` // passthrough any http headers
+	Headers           map[string]any   `json:"-"` // passthrough any http headers
 	Marshal           bool                     `json:"-"` // if true, the payload be marshalled into JSON.
 }
 

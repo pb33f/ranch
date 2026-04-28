@@ -1,17 +1,21 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/go-stomp/stomp/v3/frame"
+	buspkg "github.com/pb33f/ranch/bus"
 	"github.com/stretchr/testify/assert"
 	"reflect"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type testItem struct {
@@ -20,13 +24,13 @@ type testItem struct {
 }
 
 func testStore() BusStore {
-	store := newBusStore("testStore", newTestEventBus(), nil, nil)
+	store := newBusStore("testStore", buspkg.NewEventBus(), nil, nil)
 	store.Initialize()
 	return store
 }
 
 type mockGalacticStoreConnection struct {
-	messages []map[string]interface{}
+	messages []map[string]any
 	topics   []string
 	opts     []func(fr *frame.Frame) error
 }
@@ -36,15 +40,17 @@ func (con *mockGalacticStoreConnection) SendJSONMessage(destination string, payl
 }
 
 func (con *mockGalacticStoreConnection) SendMessage(destination, contentType string, payload []byte, opts ...func(*frame.Frame) error) error {
-	var msgPayload map[string]interface{}
-	json.Unmarshal(payload, &msgPayload)
+	var msgPayload map[string]any
+	if err := json.Unmarshal(payload, &msgPayload); err != nil {
+		return err
+	}
 	con.messages = append(con.messages, msgPayload)
 	con.topics = append(con.topics, destination)
 	con.opts = opts
 	return nil
 }
 
-func (con *mockGalacticStoreConnection) lastMessage() map[string]interface{} {
+func (con *mockGalacticStoreConnection) lastMessage() map[string]any {
 	n := len(con.messages)
 	return con.messages[n-1]
 }
@@ -54,13 +60,13 @@ func (con *mockGalacticStoreConnection) lastTopic() string {
 	return con.topics[n-1]
 }
 
-func testGalacticStore(itemType reflect.Type) (BusStore, *mockGalacticStoreConnection, EventBus) {
+func testGalacticStore(itemType reflect.Type) (BusStore, *mockGalacticStoreConnection, buspkg.EventBus) {
 
-	bus := newTestEventBus()
-	bus.GetChannelManager().CreateChannel("sync-channel")
+	b := buspkg.NewEventBus()
+	b.GetChannelManager().CreateChannel("sync-channel")
 
 	conn := &mockGalacticStoreConnection{
-		messages: make([]map[string]interface{}, 0),
+		messages: make([]map[string]any, 0),
 		topics:   make([]string, 0),
 		opts:     make([]func(*frame.Frame) error, 0),
 	}
@@ -73,8 +79,8 @@ func testGalacticStore(itemType reflect.Type) (BusStore, *mockGalacticStoreConne
 		},
 	}
 
-	store := newBusStore("testStore", bus, itemType, conf)
-	return store, conn, bus
+	store := newBusStore("testStore", b, itemType, conf)
+	return store, conn, b
 }
 
 func TestBusStore_CreateStore(t *testing.T) {
@@ -105,6 +111,66 @@ func TestBusStore_PutAndGet(t *testing.T) {
 	assert.Nil(t, v)
 }
 
+func TestBusStore_PutContextCanceled(t *testing.T) {
+	store := testStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	store.PutContext(ctx, "id1", "value1", "ITEM_ADDED")
+
+	v, ok := store.Get("id1")
+	assert.False(t, ok)
+	assert.Nil(t, v)
+}
+
+func TestBusStore_PutContextNotifiesAfterCallerCancel(t *testing.T) {
+	restore := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(restore)
+
+	store := testStore()
+	changes := make(chan *StoreChange, 1)
+	assert.NoError(t, store.OnAllChanges("ITEM_ADDED").Subscribe(func(change *StoreChange) {
+		changes <- change
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store.PutContext(ctx, "id1", "value1", "ITEM_ADDED")
+	cancel()
+
+	select {
+	case change := <-changes:
+		assert.Equal(t, "id1", change.Id)
+		assert.Equal(t, "value1", change.Value)
+	case <-time.After(time.Second):
+		t.Fatal("store change notification was not delivered after put returned")
+	}
+}
+
+func TestBusStore_RemoveContextNotifiesAfterCallerCancel(t *testing.T) {
+	restore := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(restore)
+
+	store := testStore()
+	store.Put("id1", "value1", "ITEM_ADDED")
+	changes := make(chan *StoreChange, 1)
+	assert.NoError(t, store.OnAllChanges("ITEM_REMOVED").Subscribe(func(change *StoreChange) {
+		changes <- change
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	assert.True(t, store.RemoveContext(ctx, "id1", "ITEM_REMOVED"))
+	cancel()
+
+	select {
+	case change := <-changes:
+		assert.Equal(t, "id1", change.Id)
+		assert.Equal(t, "value1", change.Value)
+		assert.True(t, change.IsDeleteChange)
+	case <-time.After(time.Second):
+		t.Fatal("store change notification was not delivered after remove returned")
+	}
+}
+
 func TestBusStore_Remove(t *testing.T) {
 	store := testStore()
 	store.Put("id1", "item1", "ITEM_ADDED")
@@ -116,7 +182,7 @@ func TestBusStore_Remove(t *testing.T) {
 	wg.Add(1)
 
 	stream := store.OnAllChanges("ITEM_REMOVED")
-	stream.Subscribe(func(change *StoreChange) {
+	_ = stream.Subscribe(func(change *StoreChange) {
 		atomic.AddInt32(&mutationEventsCounter, 1)
 		wg.Done()
 	})
@@ -181,7 +247,7 @@ func TestBusStore_OnChange(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		stream := store.OnChange("id1")
 		allChangesStreams = append(allChangesStreams, stream)
-		stream.Subscribe(func(change *StoreChange) {
+		_ = stream.Subscribe(func(change *StoreChange) {
 			atomic.AddInt32(&allChangesCounter, 1)
 			wg.Done()
 		})
@@ -189,7 +255,7 @@ func TestBusStore_OnChange(t *testing.T) {
 
 	var itemUpdateCounter int32 = 0
 	for i := 0; i < 5; i++ {
-		store.OnChange("id1", "ITEM_REMOVE", "ITEM_UPDATE").Subscribe(
+		_ = store.OnChange("id1", "ITEM_REMOVE", "ITEM_UPDATE").Subscribe(
 			func(change *StoreChange) {
 				atomic.AddInt32(&itemUpdateCounter, 1)
 				wg.Done()
@@ -217,7 +283,7 @@ func TestBusStore_OnChange(t *testing.T) {
 
 	// Unsubscribe all changes listeners
 	for _, stream := range allChangesStreams {
-		stream.Unsubscribe()
+		_ = stream.Unsubscribe()
 	}
 
 	wg.Add(5)
@@ -253,14 +319,14 @@ func TestBusStore_OnAllChanges(t *testing.T) {
 
 	var allChangesCounter int32 = 0
 	allChangesStream := store.OnAllChanges()
-	allChangesStream.Subscribe(func(change *StoreChange) {
+	_ = allChangesStream.Subscribe(func(change *StoreChange) {
 		atomic.AddInt32(&allChangesCounter, 1)
 		wg.Done()
 	})
 
 	itemUpdatedStream := store.OnAllChanges("ITEM_UPDATED", "ITEM_REMOVED")
 	var itemUpdateCounter int32 = 0
-	itemUpdatedStream.Subscribe(
+	_ = itemUpdatedStream.Subscribe(
 		func(change *StoreChange) {
 			atomic.AddInt32(&itemUpdateCounter, 1)
 			wg.Done()
@@ -285,7 +351,7 @@ func TestBusStore_OnAllChanges(t *testing.T) {
 	assert.Equal(t, allChangesCounter, int32(200))
 	assert.Equal(t, itemUpdateCounter, int32(100))
 
-	allChangesStream.Unsubscribe()
+	_ = allChangesStream.Unsubscribe()
 
 	wg.Add(1)
 	store.Put("id1", "newValue", "ITEM_REMOVED")
@@ -296,7 +362,7 @@ func TestBusStore_OnAllChanges(t *testing.T) {
 }
 
 func TestBusStore_WhenReady(t *testing.T) {
-	store := newBusStore("testStore", newTestEventBus(), nil, nil)
+	store := newBusStore("testStore", buspkg.NewEventBus(), nil, nil)
 
 	wg := sync.WaitGroup{}
 	var counter int32 = 0
@@ -326,7 +392,7 @@ func TestBusStore_WhenReady(t *testing.T) {
 }
 
 func TestBusStore_Populate(t *testing.T) {
-	store := newBusStore("testStore", newTestEventBus(), nil, nil)
+	store := newBusStore("testStore", buspkg.NewEventBus(), nil, nil)
 
 	wg := sync.WaitGroup{}
 	counter := 0
@@ -337,7 +403,7 @@ func TestBusStore_Populate(t *testing.T) {
 		wg.Done()
 	})
 
-	err := store.Populate(map[string]interface{}{
+	err := store.Populate(map[string]any{
 		"id1": 1,
 		"id2": 2,
 		"id3": 3,
@@ -357,7 +423,7 @@ func TestBusStore_Populate(t *testing.T) {
 	assert.Equal(t, allValues["id3"], 3)
 	assert.Equal(t, allValues["id4"], 4)
 
-	err = store.Populate(map[string]interface{}{
+	err = store.Populate(map[string]any{
 		"id1": 1,
 	})
 
@@ -366,7 +432,7 @@ func TestBusStore_Populate(t *testing.T) {
 }
 
 func TestBusStore_Reset(t *testing.T) {
-	store := newBusStore("testStore", newTestEventBus(), nil, nil)
+	store := newBusStore("testStore", buspkg.NewEventBus(), nil, nil)
 	wg := sync.WaitGroup{}
 	counter := 0
 
@@ -376,7 +442,7 @@ func TestBusStore_Reset(t *testing.T) {
 		wg.Done()
 	})
 
-	store.Populate(map[string]interface{}{
+	_ = store.Populate(map[string]any{
 		"id1": 1,
 		"id2": 2,
 		"id3": 3,
@@ -406,14 +472,14 @@ func TestBusStore_OnMutationRequest(t *testing.T) {
 	var errorCount int32 = 0
 
 	allMutationsStream := store.OnMutationRequest()
-	allMutationsStream.Subscribe(func(mutationReq *MutationRequest) {
+	_ = allMutationsStream.Subscribe(func(mutationReq *MutationRequest) {
 		atomic.AddInt32(&allMutationsCounter, 1)
 		mutationReq.SuccessHandler(mutationReq.Request.(string) + "-response")
 	})
 
 	var updateMutationsCounter int32 = 0
 	updateMutationStream := store.OnMutationRequest("UPDATE_ITEM", "REMOVE_ITEM")
-	updateMutationStream.Subscribe(func(mutationReq *MutationRequest) {
+	_ = updateMutationStream.Subscribe(func(mutationReq *MutationRequest) {
 		atomic.AddInt32(&updateMutationsCounter, 1)
 		mutationReq.ErrorHandler(mutationReq.Request.(string) + "-error")
 	})
@@ -425,12 +491,12 @@ func TestBusStore_OnMutationRequest(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			store.Mutate(req, "UPDATE_ITEM",
-				func(result interface{}) {
+				func(result any) {
 					assert.Equal(t, result, req+"-response")
 					atomic.AddInt32(&responseCount, 1)
 					wg.Done()
 				},
-				func(err interface{}) {
+				func(err any) {
 					assert.Equal(t, err, req+"-error")
 					atomic.AddInt32(&errorCount, 1)
 					wg.Done()
@@ -440,7 +506,7 @@ func TestBusStore_OnMutationRequest(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			store.Mutate(req, "MODIFY_ITEM",
-				func(result interface{}) {
+				func(result any) {
 					assert.Equal(t, result, req+"-response")
 					atomic.AddInt32(&responseCount, 1)
 					wg.Done()
@@ -455,12 +521,12 @@ func TestBusStore_OnMutationRequest(t *testing.T) {
 	assert.Equal(t, updateMutationsCounter, int32(100))
 	assert.Equal(t, errorCount, int32(100))
 
-	allMutationsStream.Unsubscribe()
+	_ = allMutationsStream.Unsubscribe()
 
 	wg.Add(1)
 	store.Mutate("req", "UPDATE_ITEM",
 		nil,
-		func(err interface{}) {
+		func(err any) {
 			assert.Equal(t, err, "req-error")
 			atomic.AddInt32(&errorCount, 1)
 			wg.Done()
@@ -483,7 +549,7 @@ func TestBusStore_OnMutationRequest_ErrorHandling(t *testing.T) {
 	err = ms.Subscribe(nil)
 	assert.EqualError(t, err, "invalid MutationRequestHandlerFunction")
 
-	ms.Subscribe(func(mutationReq *MutationRequest) {})
+	_ = ms.Subscribe(func(mutationReq *MutationRequest) {})
 
 	err = ms.Subscribe(func(mutationReq *MutationRequest) {})
 	assert.EqualError(t, err, "stream already subscribed")
@@ -499,7 +565,7 @@ func TestBusStore_InitGalacticStore(t *testing.T) {
 	assert.Equal(t, conn.lastTopic(), "/pub/sync-channel")
 	assert.Equal(t, conn.lastMessage()["request"], "openStore")
 
-	rq := conn.lastMessage()["payload"].(map[string]interface{})
+	rq := conn.lastMessage()["payload"].(map[string]any)
 	assert.Equal(t, rq["storeId"], "testStore")
 
 	wg := sync.WaitGroup{}
@@ -517,7 +583,7 @@ func TestBusStore_InitGalacticStore(t *testing.T) {
         },
         "storeVersion": 12
     }`)
-	bus.SendResponseMessage("sync-channel", jsonBlob, nil)
+	_ = bus.SendResponseMessage("sync-channel", jsonBlob, nil)
 
 	wg.Wait()
 	assert.Equal(t, len(store.AllValues()), 1)
@@ -527,7 +593,7 @@ func TestBusStore_InitGalacticStore(t *testing.T) {
 
 	assert.Equal(t, conn.lastTopic(), "/pub/sync-channel")
 	assert.Equal(t, conn.lastMessage()["request"], "updateStore")
-	rq = conn.lastMessage()["payload"].(map[string]interface{})
+	rq = conn.lastMessage()["payload"].(map[string]any)
 	assert.Equal(t, rq["storeId"], "testStore")
 	assert.Equal(t, rq["itemId"], "id1")
 	assert.Equal(t, rq["newItemValue"], "value1")
@@ -541,7 +607,7 @@ func TestBusStore_InitGalacticStore(t *testing.T) {
 
 	assert.Equal(t, conn.lastTopic(), "/pub/sync-channel")
 	assert.Equal(t, conn.lastMessage()["request"], "updateStore")
-	rq = conn.lastMessage()["payload"].(map[string]interface{})
+	rq = conn.lastMessage()["payload"].(map[string]any)
 	assert.Equal(t, rq["storeId"], "testStore")
 	assert.Equal(t, rq["itemId"], "id3")
 	assert.Equal(t, rq["newItemValue"], nil)
@@ -566,7 +632,7 @@ func TestBusStore_GalacticStoreUpdates(t *testing.T) {
 
 	var lastStoreChange *StoreChange
 
-	store.OnAllChanges().Subscribe(func(change *StoreChange) {
+	_ = store.OnAllChanges().Subscribe(func(change *StoreChange) {
 		lastStoreChange = change
 		wg.Done()
 	})
@@ -578,11 +644,11 @@ func TestBusStore_GalacticStoreUpdates(t *testing.T) {
         "newItemValue": { "from": "admin", "message": "value1"},
         "storeVersion": 54
     }`)
-	bus.SendResponseMessage("sync-channel", jsonBlob, nil)
+	_ = bus.SendResponseMessage("sync-channel", jsonBlob, nil)
 
-	bus.SendResponseMessage("sync-channel", []byte("invalid-json}"), nil)
+	_ = bus.SendResponseMessage("sync-channel", []byte("invalid-json}"), nil)
 
-	bus.SendResponseMessage("sync-channel", []byte(`{
+	_ = bus.SendResponseMessage("sync-channel", []byte(`{
         "storeId": "testStore2",
         "responseType": "updateStoreResponse",
         "itemId": "id1",
@@ -606,9 +672,9 @@ func TestBusStore_GalacticStoreUpdates(t *testing.T) {
         "itemId": "id1",
         "storeVersion": 55
     }`)
-	bus.SendResponseMessage("sync-channel", jsonBlob, nil)
+	_ = bus.SendResponseMessage("sync-channel", jsonBlob, nil)
 
-	bus.SendResponseMessage("sync-channel", []byte(`{
+	_ = bus.SendResponseMessage("sync-channel", []byte(`{
         "storeId": "testStore",
         "responseType": "updateStoreResponse",
         "itemId": "id1",
@@ -644,7 +710,7 @@ func TestBusStore_GalacticStoreContent(t *testing.T) {
         },
         "storeVersion": 12
     }`)
-	bus.SendResponseMessage("sync-channel", jsonBlob, nil)
+	_ = bus.SendResponseMessage("sync-channel", jsonBlob, nil)
 
 	wg.Wait()
 

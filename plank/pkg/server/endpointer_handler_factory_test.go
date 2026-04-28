@@ -5,7 +5,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
-	"github.com/pb33f/ranch/service"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"os"
@@ -13,15 +12,17 @@ import (
 	"time"
 )
 
-func TestBuildEndpointHandler_Timeout(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
-	msgChan := make(chan *model.Message, 1)
-	_ = b.GetChannelManager().CreateChannel("test-chan")
+func newTestEndpointHandlerServer() (*platformServer, bus.EventBus) {
 	port := GetTestPort()
 	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
 	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
+	return ps, ps.eventbus
+}
+
+func TestBuildEndpointHandler_Timeout(t *testing.T) {
+	ps, b := newTestEndpointHandlerServer()
+	msgChan := make(chan *model.Message, 1)
+	_ = b.GetChannelManager().CreateChannel("test-chan")
 	assert.HTTPBodyContains(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		return model.Request{
 			Payload:        nil,
@@ -31,14 +32,9 @@ func TestBuildEndpointHandler_Timeout(t *testing.T) {
 }
 
 func TestBuildEndpointHandler_ChanResponseErr(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
+	ps, b := newTestEndpointHandlerServer()
 	msgChan := make(chan *model.Message, 1)
 	_ = b.GetChannelManager().CreateChannel("test-chan")
-	port := GetTestPort()
-	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
-	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
 	assert.HTTPErrorf(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		uId := &uuid.UUID{}
 		msgChan <- &model.Message{Error: fmt.Errorf("test error")}
@@ -51,14 +47,9 @@ func TestBuildEndpointHandler_ChanResponseErr(t *testing.T) {
 }
 
 func TestBuildEndpointHandler_SuccessResponse(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
+	ps, b := newTestEndpointHandlerServer()
 	msgChan := make(chan *model.Message, 1)
 	_ = b.GetChannelManager().CreateChannel("test-chan")
-	port := GetTestPort()
-	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
-	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
 	assert.HTTPBodyContains(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		uId := &uuid.UUID{}
 		msgChan <- &model.Message{Payload: &model.Response{
@@ -74,13 +65,8 @@ func TestBuildEndpointHandler_SuccessResponse(t *testing.T) {
 }
 
 func TestBuildEndpointHandler_ErrorResponse(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
+	ps, b := newTestEndpointHandlerServer()
 	_ = b.GetChannelManager().CreateChannel("test-chan")
-	port := GetTestPort()
-	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
-	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
 
 	expected := `{"error": true}`
 
@@ -105,14 +91,9 @@ func TestBuildEndpointHandler_ErrorResponse(t *testing.T) {
 }
 
 func TestBuildEndpointHandler_ErrorResponseAlternative(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
+	ps, b := newTestEndpointHandlerServer()
 	msgChan := make(chan *model.Message, 1)
 	_ = b.GetChannelManager().CreateChannel("test-chan")
-	port := GetTestPort()
-	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
-	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
 
 	uId := &uuid.UUID{}
 	rsp := &model.Response{
@@ -133,14 +114,9 @@ func TestBuildEndpointHandler_ErrorResponseAlternative(t *testing.T) {
 }
 
 func TestBuildEndpointHandler_CatchPanic(t *testing.T) {
-	b := bus.ResetBus()
-	service.ResetServiceRegistry()
+	ps, b := newTestEndpointHandlerServer()
 	msgChan := make(chan *model.Message, 1)
 	_ = b.GetChannelManager().CreateChannel("test-chan")
-	port := GetTestPort()
-	config := GetBasicTestServerConfig(os.TempDir(), "stdout", "stdout", "stderr", port, true)
-	ps := NewPlatformServer(config).(*platformServer)
-	ps.eventbus = b
 	assert.HTTPBodyContains(t, ps.buildEndpointHandler("test-chan", func(w http.ResponseWriter, r *http.Request) model.Request {
 		panic("peekaboo")
 	}, 5*time.Second, msgChan), "GET", "http://localhost", nil, "Internal Server Error")

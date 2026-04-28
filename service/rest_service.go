@@ -5,6 +5,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/pb33f/ranch/model"
 	"io"
@@ -14,9 +15,11 @@ import (
 	"strings"
 )
 
-const (
-	restServiceChannel = "fabric-rest"
-)
+const RestServiceChannel = "fabric-rest"
+
+func NewRestService() FabricService {
+	return &restService{}
+}
 
 type RestServiceRequest struct {
 	// The destination URL of the request.
@@ -25,12 +28,12 @@ type RestServiceRequest struct {
 	Method string `json:"method"`
 	// The body of the request. String and []byte payloads will be sent as is,
 	// all other payloads will be serialized as json.
-	Body interface{} `json:"body"`
+	Body any `json:"body"`
 	//  HTTP headers of the request.
 	Headers map[string]string `json:"headers"`
 	// Optional type of the response body. If provided the service will try to deserialize
 	// the response to this type.
-	// If omitted the response body will be deserialized as map[string]interface{}
+	// If omitted the response body will be deserialized as map[string]any
 	// Note that if the response body is not a valid json you should set
 	// the ResponseType to string or []byte otherwise you might get deserialization error
 	// or empty result.
@@ -64,6 +67,13 @@ func (rs *restService) setBaseHost(host string) {
 }
 
 func (rs *restService) HandleServiceRequest(request *model.Request, core FabricServiceCore) {
+	rs.HandleServiceRequestContext(context.Background(), request, core)
+}
+
+func (rs *restService) HandleServiceRequestContext(ctx context.Context, request *model.Request, core FabricServiceCore) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	restReq, ok := rs.getRestServiceRequest(request)
 	if !ok {
@@ -77,7 +87,7 @@ func (rs *restService) HandleServiceRequest(request *model.Request, core FabricS
 		return
 	}
 
-	httpReq, err := http.NewRequest(restReq.Method,
+	httpReq, err := http.NewRequestWithContext(ctx, restReq.Method,
 		rs.getRequestUrl(restReq.Uri, core), bytes.NewBuffer(body))
 
 	if err != nil {
@@ -109,12 +119,12 @@ func (rs *restService) HandleServiceRequest(request *model.Request, core FabricS
 		core.SendErrorResponse(request, 500, err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode >= 300 {
 		core.SendErrorResponseWithPayload(request, httpResp.StatusCode,
 			"rest-service error, unable to complete request: "+httpResp.Status,
-			map[string]interface{}{
+			map[string]any{
 				"errorCode": httpResp.StatusCode,
 				"message":   "rest-service error, unable to complete request: " + httpResp.Status,
 			})
@@ -135,9 +145,9 @@ func (rs *restService) getRestServiceRequest(request *model.Request) (*RestServi
 		return restReq, true
 	}
 
-	// check if the request.Payload is map[string]interface{} and convert it to RestServiceRequest
+	// check if the request.Payload is map[string]any and convert it to RestServiceRequest
 	// This is needed to handle requests coming from Java/Typescript Transport clients.
-	reqAsMap, ok := request.Payload.(map[string]interface{})
+	reqAsMap, ok := request.Payload.(map[string]any)
 	if ok {
 		restServReqInt, err := model.ConvertValueToType(reqAsMap, reflect.TypeOf(&RestServiceRequest{}))
 		if err == nil && restServReqInt != nil {
@@ -166,7 +176,7 @@ func (rs *restService) getRequestUrl(address string, core FabricServiceCore) str
 }
 
 func (rs *restService) deserializeResponse(
-	body io.ReadCloser, responseType reflect.Type) (interface{}, error) {
+	body io.ReadCloser, responseType reflect.Type) (any, error) {
 
 	if responseType != nil {
 
@@ -207,7 +217,7 @@ func (rs *restService) deserializeResponse(
 			return reflect.ValueOf(decodedValuePtr).Elem().Interface(), nil
 		}
 	} else {
-		var result map[string]interface{}
+		var result map[string]any
 		err := json.NewDecoder(body).Decode(&result)
 		return result, err
 	}

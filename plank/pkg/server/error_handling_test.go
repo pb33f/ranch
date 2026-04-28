@@ -138,7 +138,7 @@ func TestRouteErrorPoliciesUseLongestPrefixFor404And405(t *testing.T) {
 	}
 
 	ps := NewPlatformServer(cfg).(*platformServer)
-	ps.router.HandleFunc("/workspaces", func(w http.ResponseWriter, r *http.Request) {
+	ps.router.Path("/workspaces").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodGet)
 
@@ -163,7 +163,7 @@ func TestRouteErrorPoliciesUseLongestPrefixFor404And405(t *testing.T) {
 	})
 
 	t.Run("method not allowed falls back to parent prefix when child has no 405", func(t *testing.T) {
-		ps.router.HandleFunc("/workspaces/admin", func(w http.ResponseWriter, r *http.Request) {
+		ps.router.Path("/workspaces/admin").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}).Methods(http.MethodGet)
 		req := httptest.NewRequest(http.MethodPost, "/workspaces/admin", nil)

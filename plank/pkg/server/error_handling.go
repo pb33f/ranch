@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gorilla/mux"
+	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
 func BrowserNavigationFallback() func(*http.Request) bool {
@@ -22,7 +22,7 @@ func BrowserNavigationFallback() func(*http.Request) bool {
 	}
 }
 
-func (ps *platformServer) configureRouterErrorHandlers(router *mux.Router) {
+func (ps *platformServer) configureRouterErrorHandlers(router *routing.Router) {
 	router.NotFoundHandler = http.HandlerFunc(ps.handleNotFound)
 	router.MethodNotAllowedHandler = http.HandlerFunc(ps.handleMethodNotAllowed)
 }
@@ -129,9 +129,7 @@ func pathMatchesPrefix(requestPath, prefix string) bool {
 	if !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
 	}
-	if strings.HasSuffix(prefix, "/") {
-		prefix = strings.TrimSuffix(prefix, "/")
-	}
+	prefix = strings.TrimSuffix(prefix, "/")
 	if requestPath == prefix {
 		return true
 	}

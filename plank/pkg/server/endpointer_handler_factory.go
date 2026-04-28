@@ -23,12 +23,16 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 		}()
 
 		// set context that expires after the provided amount of time in restBridgeTimeout to prevent requests from hanging forever
-		ctx, cancelFn := context.WithTimeout(context.Background(), restBridgeTimeout)
+		ctx, cancelFn := context.WithTimeout(r.Context(), restBridgeTimeout)
 		defer cancelFn()
 
 		// relay the request to transport channel
 		reqModel := reqBuilder(w, r)
-		err := ps.eventbus.SendRequestMessage(svcChannel, reqModel, reqModel.Id)
+		err := ps.eventbus.SendRequestMessageContext(ctx, svcChannel, reqModel, reqModel.Id)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 
 		// get a response from the channel, render the results using ResponseWriter and log the data/error
 		// to the console as well.
@@ -45,7 +49,7 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 			} else {
 				// only send the actual user payloadChannel not wrapper information
 				response := msg.Payload.(*model.Response)
-				var respBody interface{}
+				var respBody any
 				if response.Error {
 					if response.Payload != nil {
 						respBody = response.Payload
@@ -69,7 +73,7 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 						w.WriteHeader(response.ErrorCode)
 						switch reflect.TypeOf(respBody).Kind() {
 						case reflect.String:
-							_, _ = w.Write([]byte(fmt.Sprint(respBody)))
+							_, _ = fmt.Fprint(w, respBody)
 						case reflect.Pointer:
 							n, e := json.Marshal(respBody)
 							if e != nil {
@@ -78,15 +82,13 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 								_, _ = w.Write(n)
 							}
 						}
-					} else {
-						if response.ErrorObject != nil {
-							n, e := json.Marshal(respBody)
-							if e != nil {
-								http.Error(w, e.Error(), 500)
-							} else {
-								w.WriteHeader(response.ErrorCode)
-								w.Write(n)
-							}
+					} else if response.ErrorObject != nil {
+						n, e := json.Marshal(respBody)
+						if e != nil {
+							http.Error(w, e.Error(), 500)
+						} else {
+							w.WriteHeader(response.ErrorCode)
+							_, _ = w.Write(n)
 						}
 					}
 				} else {
@@ -101,6 +103,10 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 					// set in the request and the restBody could be in a format that is not a byte slice.
 					if response.Marshal {
 						respBodyBytes, err = ensureResponseInByteSlice(respBody)
+						if err != nil {
+							http.Error(w, err.Error(), 500)
+							return
+						}
 					} else {
 						respBodyBytes = []byte(fmt.Sprint(respBody))
 					}
@@ -110,7 +116,7 @@ func (ps *platformServer) buildEndpointHandler(svcChannel string, reqBuilder ser
 					}
 
 					// write the non-error payload back.
-					if _, err = w.Write(respBodyBytes); err != nil {
+					if _, err := w.Write(respBodyBytes); err != nil {
 						ps.serverConfig.Logger.Error("error received from channel", "error",
 							err.Error(), "channel", svcChannel)
 						http.Error(w, err.Error(), 500)

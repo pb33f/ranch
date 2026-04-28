@@ -86,7 +86,7 @@ func TestGeneratePlatformServerConfig_ConfigFile(t *testing.T) {
 	if err != nil {
 		assert.FailNow(t, err.Error())
 	}
-	defer os.RemoveAll(filepath.Dir(configFile))
+	defer func() { _ = os.RemoveAll(filepath.Dir(configFile)) }()
 
 	// act
 	testArgs := []string{"", "--config-file", configFile}
@@ -127,8 +127,9 @@ func TestMarshalResponseBody_byteSlice(t *testing.T) {
 }
 
 func TestMarshalResponseBody_nonByteSlice(t *testing.T) {
-	payload := PlatformServerConfig{}
-	jsonMarshalled, _ := json.Marshal(payload)
+	payload := map[string]string{"hello": "world"}
+	jsonMarshalled, err := json.Marshal(payload)
+	assert.NoError(t, err)
 	results, err := ensureResponseInByteSlice(payload)
 
 	assert.Nil(t, err)

@@ -1,9 +1,10 @@
 // Copyright 2019-2020 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-package bus
+package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -19,7 +20,7 @@ type StoreStream interface {
 }
 
 type streamFilter struct {
-	states        []interface{}
+	states        []any
 	itemId        string
 	matchAllItems bool
 }
@@ -84,14 +85,24 @@ func (s *storeStream) Unsubscribe() error {
 	return nil
 }
 
-func (s *storeStream) onStoreChange(change *StoreChange) {
+func (s *storeStream) onStoreChange(ctx context.Context, change *StoreChange) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	if !s.filter.match(change) {
 		return
 	}
 
 	s.lock.RLock()
-	defer s.lock.RUnlock()
-	if s.handler != nil {
-		go s.handler(change)
+	handler := s.handler
+	s.lock.RUnlock()
+	if handler != nil {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		handler(change)
 	}
 }

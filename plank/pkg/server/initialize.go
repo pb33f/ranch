@@ -3,23 +3,25 @@ package server
 import (
 	"errors"
 	"fmt"
-	"github.com/gorilla/mux"
-	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
+	"github.com/pb33f/ranch/plank/pkg/routing"
 	"github.com/pb33f/ranch/plank/utils"
 	"github.com/pb33f/ranch/service"
 	"github.com/pb33f/ranch/stompserver"
+	"github.com/pb33f/ranch/transport/fabric"
 	"net"
 	"net/http"
-	_ "net/http/pprof"
+	_ "net/http/pprof" // #nosec G108 -- pprof is only started when debug mode enables the profiler listener.
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"time"
 )
 
-func (ps *platformServer) GetRouter() *mux.Router {
+func (ps *platformServer) GetRouter() *routing.Router {
+	ps.lock.Lock()
+	defer ps.lock.Unlock()
 	return ps.router
 }
 
@@ -28,10 +30,6 @@ func (ps *platformServer) GetRouter() *mux.Router {
 func (ps *platformServer) initialize() {
 	var err error
 
-	// initialize core components
-	var serviceRegistryInstance = service.GetServiceRegistry()
-	var svcLifecycleManager = service.GetServiceLifecycleManager()
-
 	// create essential bus channels
 	ps.eventbus.GetChannelManager().CreateChannel(RANCH_SERVER_ONLINE_CHANNEL)
 
@@ -39,34 +37,14 @@ func (ps *platformServer) initialize() {
 	ps.endpointHandlerMap = map[string]http.HandlerFunc{}
 	ps.serviceChanToBridgeEndpoints = make(map[string][]string, 0)
 
-	// initialize log output streams
-	//if err = ps.serverConfig.LogConfig.PrepareLogFiles(); err != nil {
-	//	panic(err)
-	//}
-
-	// alias outputLogFp as ps.out for platform log outputs
-	//ps.out = ps.serverConfig.LogConfig.GetPlatformLogFilePointer()
-
-	// set logrus out writer options and assign output stream to ps.out
-	//formatter := utils.CreateTextFormatterFromFormatOptions(ps.serverConfig.LogConfig.FormatOptions)
-	//	utils.Log.SetFormatter(formatter)
-	//	utils.Log.SetOutput(ps.out)
-
 	// if debug flag is provided enable extra logging. also, enable profiling.
 	if ps.serverConfig.Debug {
 		ps.startDebugProfiler()
 	}
 
 	// set a new route handler
-	ps.router = mux.NewRouter().Schemes("http", "https").Subrouter()
+	ps.router = routing.NewRouter()
 	ps.configureRouterErrorHandlers(ps.router)
-
-	// register a reserved path /health for use with container orchestration layer like k8s
-	//ps.endpointHandlerMap["/health"] = func(w http.ResponseWriter, r *http.Request) {
-	//	_, _ = w.Write([]byte("OK"))
-	//}
-	//ps.router.Path("/health").Name("/health").Handler(
-	//	middleware.CacheControlMiddleware([]string{"/health"}, middleware.NewCacheControlDirective().NoStore())(ps.endpointHandlerMap["/health"]))
 
 	// register static paths
 	for _, dir := range ps.serverConfig.StaticDir {
@@ -82,6 +60,10 @@ func (ps *platformServer) initialize() {
 		WriteTimeout: 60 * time.Second,
 	}
 
+	if err = ps.registry.RegisterService(service.NewRestService(), service.RestServiceChannel); err != nil {
+		ps.serverConfig.Logger.Error(err.Error())
+	}
+
 	// set up a listener to receive REST bridge configs for services and set them up according to their specs
 	lcmChanHandler, err := ps.eventbus.ListenStreamForDestination(service.LifecycleManagerChannelName, ps.eventbus.GetId())
 	if err != nil {
@@ -94,13 +76,12 @@ func (ps *platformServer) initialize() {
 			ps.serverConfig.Logger.Error("failed to set up REST bridge ")
 		}
 
-		fabricSvc, _ := serviceRegistryInstance.GetService(request.ServiceChannel)
-		svcReadyStore := ps.eventbus.GetStoreManager().GetStore(service.ServiceReadyStore)
-		hooks := svcLifecycleManager.GetOnReadyCapableService(request.ServiceChannel)
+		fabricSvc, _ := ps.registry.GetService(request.ServiceChannel)
+		svcReadyStore := ps.storeManager.GetStore(service.ServiceReadyStore)
+		hooks := ps.lifecycle.GetOnReadyCapableService(request.ServiceChannel)
 
 		if request.Override {
-			// clear old bridges affected by this override. there's a suboptimal workaround for mux.Router not
-			// supporting a way to dynamically remove routers slice. see clearHttpChannelBridgesForService for details
+			// clear old bridges affected by this override.
 			newRouter := ps.clearHttpChannelBridgesForService(request.ServiceChannel)
 			ps.loadGlobalHttpHandler(newRouter)
 		}
@@ -129,7 +110,7 @@ func (ps *platformServer) initialize() {
 	// create an internal bus channel to notify significant changes in sessions such as disconnect
 	if ps.serverConfig.FabricConfig != nil {
 		channelManager := ps.eventbus.GetChannelManager()
-		channelManager.CreateChannel(bus.STOMP_SESSION_NOTIFY_CHANNEL)
+		channelManager.CreateChannel(fabric.STOMP_SESSION_NOTIFY_CHANNEL)
 	}
 
 	// configure Fabric
@@ -139,8 +120,6 @@ func (ps *platformServer) initialize() {
 
 func (ps *platformServer) startDebugProfiler() {
 	runtime.SetBlockProfileRate(1) // capture traces of all possible contended mutex holders
-	profilerRouter := mux.NewRouter()
-	profilerRouter.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
 
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", ps.serverConfig.DebugProfilerPort))
 	if err != nil {
@@ -149,7 +128,10 @@ func (ps *platformServer) startDebugProfiler() {
 	}
 
 	ps.profilerListener = ln
-	ps.profilerServer = &http.Server{Handler: profilerRouter}
+	ps.profilerServer = &http.Server{
+		Handler:           http.DefaultServeMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	go func() {
 		if err := ps.profilerServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -176,7 +158,7 @@ func (ps *platformServer) configureFabric() {
 			ps.router,
 			ps.serverConfig.FabricConfig.FabricEndpoint,
 			nil, ps.serverConfig.Logger, ps.serverConfig.Debug,
-			ps.serverConfig.SocketCreationFunc) // TODO: consider tightening access by allowing configuring allowedOrigins
+			ps.serverConfig.SocketCreationFunc)
 	}
 
 	// if creation of listener fails, crash and burn
@@ -190,7 +172,6 @@ func (ps *platformServer) configureSPA() {
 		return
 	}
 
-	// TODO: error if the base uri conflicts with another URI registered before
 	for _, asset := range ps.serverConfig.SpaConfig.StaticAssets {
 		folderPath, uri := utils.DeriveStaticURIFromPath(asset)
 		ps.SetStaticRoute(

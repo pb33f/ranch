@@ -12,7 +12,7 @@ import (
 type Request struct {
 	Id                 *uuid.UUID          `json:"id,omitempty"`
 	Destination        string              `json:"channel,omitempty"`
-	Payload            interface{}         `json:"payload,omitempty"`
+	Payload            any         `json:"payload,omitempty"`
 	RequestCommand     string              `json:"request,omitempty" mapstructure:"request"`
 	HttpRequest        *http.Request       `json:"-"`
 	HttpResponseWriter http.ResponseWriter `json:"-"`

@@ -8,7 +8,7 @@ import (
 	"reflect"
 )
 
-func ConvertValueToType(value interface{}, targetType reflect.Type) (interface{}, error) {
+func ConvertValueToType(value any, targetType reflect.Type) (any, error) {
 	if targetType == nil {
 		return value, nil
 	}

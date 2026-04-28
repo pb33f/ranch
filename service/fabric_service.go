@@ -4,6 +4,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/pb33f/ranch/model"
 )
 
@@ -11,6 +13,10 @@ import (
 type FabricService interface {
 	// Handles a single Fabric Request
 	HandleServiceRequest(request *model.Request, core FabricServiceCore)
+}
+
+type ContextFabricService interface {
+	HandleServiceRequestContext(ctx context.Context, request *model.Request, core FabricServiceCore)
 }
 
 // FabricInitializableService Optional interface, if implemented by a fabric service, its Init method

@@ -5,12 +5,9 @@ import (
 	"net/http"
 )
 
-var svcLifecycleManagerInstance ServiceLifecycleManager
-
 type RequestBuilder func(w http.ResponseWriter, r *http.Request) model.Request
 
 type ServiceLifecycleManager interface {
-	//GetServiceHooks(serviceChannelName string) ServiceLifecycleHookEnabled
 	GetOnReadyCapableService(serviceChannelName string) OnServiceReadyEnabled
 	GetOnServerShutdownService(serviceChannelName string) OnServerShutdownEnabled
 	GetRESTBridgeEnabledService(serviceChannelName string) RESTBridgeEnabled
@@ -109,17 +106,6 @@ func (lm *serviceLifecycleManager) OverrideRESTBridgeConfig(serviceChannelName s
 	return nil
 }
 
-// GetServiceLifecycleManager returns a singleton instance of ServiceLifecycleManager
-func GetServiceLifecycleManager() ServiceLifecycleManager {
-	if svcLifecycleManagerInstance == nil {
-		svcLifecycleManagerInstance = &serviceLifecycleManager{
-			serviceRegistryRef: registry,
-		}
-	}
-	return svcLifecycleManagerInstance
-}
-
-// newServiceLifecycleManager returns a new instance of ServiceLifecycleManager
-func newServiceLifecycleManager(reg ServiceRegistry) ServiceLifecycleManager {
+func NewServiceLifecycleManager(reg ServiceRegistry) ServiceLifecycleManager {
 	return &serviceLifecycleManager{serviceRegistryRef: reg}
 }
