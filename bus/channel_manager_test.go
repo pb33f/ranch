@@ -70,6 +70,38 @@ func TestChannelManager_DestroyChannel(t *testing.T) {
 	assert.Nil(t, fetchedChannel)
 }
 
+func TestChannelManager_DestroyChannelClosesBrokerSubscriptions(t *testing.T) {
+	testChannelManager, _ = createManager()
+	channel := testChannelManager.CreateChannel(testChannelManagerChannelName)
+
+	connID := uuid.New()
+	subID := uuid.New()
+	sub := &MockBridgeSubscription{
+		Id:          &subID,
+		Destination: "/topic/destroy",
+		Channel:     make(chan *model.Message),
+	}
+	conn := &MockBridgeConnection{Id: &connID}
+	conn.On("Subscribe", "/topic/destroy").Return(sub, nil).Once()
+
+	assert.NoError(t, testChannelManager.MarkChannelAsGalactic(testChannelManagerChannelName, "/topic/destroy", conn))
+	<-channel.brokerMappedEvent
+	assert.Len(t, channel.brokerSubs, 1)
+
+	testChannelManager.DestroyChannel(testChannelManagerChannelName)
+
+	assert.True(t, sub.Unsubscribed)
+	assert.Len(t, channel.brokerSubs, 0)
+	assert.Len(t, channel.brokerConns, 0)
+	select {
+	case mapped := <-channel.brokerMappedEvent:
+		assert.False(t, mapped)
+	case <-time.After(time.Second):
+		t.Fatal("broker unmap event was not sent")
+	}
+	conn.AssertExpectations(t)
+}
+
 func TestChannelManager_SubscribeChannelHandler(t *testing.T) {
 	testChannelManager, _ = createManager()
 	testChannelManager.CreateChannel(testChannelManagerChannelName)
@@ -80,6 +112,27 @@ func TestChannelManager_SubscribeChannelHandler(t *testing.T) {
 	assert.NotNil(t, uuid)
 	channel, _ := testChannelManager.GetChannel(testChannelManagerChannelName)
 	assert.Len(t, channel.handlersSnapshot(), 1)
+}
+
+func TestChannelManager_SubscribeChannelHandlerRunOnce(t *testing.T) {
+	testChannelManager, _ = createManager()
+	channel := testChannelManager.CreateChannel(testChannelManagerChannelName)
+	count := 0
+
+	handler := func(*model.Message) {
+		count++
+	}
+	uuid, err := testChannelManager.SubscribeChannelHandler(testChannelManagerChannelName, handler, true)
+	assert.NoError(t, err)
+	assert.NotNil(t, uuid)
+
+	channel.Send(&model.Message{Channel: testChannelManagerChannelName, Direction: model.ResponseDir})
+	assert.NoError(t, testChannelManager.WaitForChannel(testChannelManagerChannelName))
+	channel.Send(&model.Message{Channel: testChannelManagerChannelName, Direction: model.ResponseDir})
+	assert.NoError(t, testChannelManager.WaitForChannel(testChannelManagerChannelName))
+
+	assert.Equal(t, 1, count)
+	assert.False(t, channel.ContainsHandlers())
 }
 
 func TestChannelManager_SubscribeChannelHandlerMissingChannel(t *testing.T) {

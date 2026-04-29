@@ -129,6 +129,8 @@ type stompServer struct {
 	ipBlockingCheckerMu         sync.RWMutex
 	readyCh                     chan struct{}
 	readyOnce                   sync.Once
+	done                        chan struct{}
+	doneOnce                    sync.Once
 }
 
 // NewStompServer creates a STOMP server around a raw connection listener.
@@ -145,6 +147,7 @@ func NewStompServer(listener RawConnectionListener, config StompConfig) StompSer
 		unsubscribeCallbacks:        make([]UnsubscribeHandlerFunction, 0),
 		applicationRequestCallbacks: make([]ApplicationRequestHandlerFunction, 0),
 		readyCh:                     make(chan struct{}),
+		done:                        make(chan struct{}),
 	}
 
 	return server
@@ -168,6 +171,39 @@ func registerCallback[T any](lock *sync.RWMutex, callbacks *[]T, callback T) {
 	*callbacks = append(*callbacks, callback)
 }
 
+func cloneCallbacks[T any](callbacks []T) []T {
+	if len(callbacks) == 0 {
+		return nil
+	}
+	cloned := make([]T, len(callbacks))
+	copy(cloned, callbacks)
+	return cloned
+}
+
+func (s *stompServer) snapshotConnectionEventCallback(eventType StompSessionEventType) func(*ConnEvent) {
+	s.callbackLock.RLock()
+	defer s.callbackLock.RUnlock()
+	return s.connectionEventCallbacks[eventType]
+}
+
+func (s *stompServer) snapshotSubscribeCallbacks() []SubscribeHandlerFunction {
+	s.callbackLock.RLock()
+	defer s.callbackLock.RUnlock()
+	return cloneCallbacks(s.subscribeCallbacks)
+}
+
+func (s *stompServer) snapshotUnsubscribeCallbacks() []UnsubscribeHandlerFunction {
+	s.callbackLock.RLock()
+	defer s.callbackLock.RUnlock()
+	return cloneCallbacks(s.unsubscribeCallbacks)
+}
+
+func (s *stompServer) snapshotApplicationRequestCallbacks() []ApplicationRequestHandlerFunction {
+	s.callbackLock.RLock()
+	defer s.callbackLock.RUnlock()
+	return cloneCallbacks(s.applicationRequestCallbacks)
+}
+
 func (s *stompServer) SendMessage(destination string, messageBody []byte) {
 
 	f := frame.New(frame.MESSAGE,
@@ -177,11 +213,11 @@ func (s *stompServer) SendMessage(destination string, messageBody []byte) {
 
 	f.Body = messageBody
 
-	s.apiEvents <- &apiEvent{
+	s.sendAPIEvent(&apiEvent{
 		eventType:   sendMessage,
 		destination: destination,
 		frame:       f,
-	}
+	})
 }
 
 func (s *stompServer) SendMessageToClient(connectionId string, destination string, messageBody []byte) {
@@ -193,12 +229,12 @@ func (s *stompServer) SendMessageToClient(connectionId string, destination strin
 
 	f.Body = messageBody
 
-	s.apiEvents <- &apiEvent{
+	s.sendAPIEvent(&apiEvent{
 		eventType:   sendPrivateMessage,
 		destination: destination,
 		frame:       f,
 		connId:      connectionId,
-	}
+	})
 }
 
 // extractIPFromAddress extracts IP address from "IP:port" or "[IPv6]:port" format
@@ -212,11 +248,11 @@ func extractIPFromAddress(address string) string {
 }
 
 func (s *stompServer) CloseConnectionsByIP(ip string, errorMessage string) {
-	s.apiEvents <- &apiEvent{
+	s.sendAPIEvent(&apiEvent{
 		eventType:    closeConnectionByIP,
 		targetIP:     ip,
 		errorMessage: errorMessage,
-	}
+	})
 }
 
 func (s *stompServer) getIPBlockingChecker() IPBlockingChecker {
@@ -244,6 +280,11 @@ func (s *stompServer) SetConnectionEventCallback(connEventType StompSessionEvent
 }
 
 func (s *stompServer) Start() {
+	select {
+	case <-s.done:
+		return
+	default:
+	}
 	if !s.running.CompareAndSwap(false, true) {
 		return
 	}
@@ -254,14 +295,57 @@ func (s *stompServer) Start() {
 
 func (s *stompServer) Stop() {
 	if s.running.CompareAndSwap(true, false) {
-		s.apiEvents <- &apiEvent{
-			eventType: closeServer,
-		}
+		s.sendCloseEvent()
 	}
 }
 
 func (s *stompServer) Ready() <-chan struct{} {
 	return s.readyCh
+}
+
+func (s *stompServer) closeDone() {
+	s.doneOnce.Do(func() {
+		close(s.done)
+	})
+}
+
+func (s *stompServer) sendAPIEvent(event *apiEvent) bool {
+	if !s.running.Load() {
+		return false
+	}
+	select {
+	case s.apiEvents <- event:
+		return true
+	case <-s.done:
+		return false
+	}
+}
+
+func (s *stompServer) sendCloseEvent() {
+	event := &apiEvent{eventType: closeServer}
+	select {
+	case s.apiEvents <- event:
+	case <-s.done:
+	default:
+		go func() {
+			select {
+			case s.apiEvents <- event:
+			case <-s.done:
+			}
+		}()
+	}
+}
+
+func (s *stompServer) sendConnectionEvent(event *ConnEvent) bool {
+	if !s.running.Load() {
+		return false
+	}
+	select {
+	case s.connectionEvents <- event:
+		return true
+	case <-s.done:
+		return false
+	}
 }
 
 func (s *stompServer) waitForConnections() {
@@ -303,24 +387,29 @@ func (s *stompServer) waitForConnections() {
 			}
 		}
 
-		c := NewStompConn(rawConn, s.config, s.connectionEvents)
+		c := newStompConn(rawConn, s.config, s.connectionEvents, s.done)
 
-		s.connectionEvents <- &ConnEvent{
+		if !s.sendConnectionEvent(&ConnEvent{
 			ConnId:    c.GetId(),
 			conn:      c,
 			eventType: ConnectionStarting,
+		}) {
+			c.Close()
+			return
 		}
 	}
 }
 
 func (s *stompServer) run() {
 	// API and connection events are serialized here; the maps below rely on this single writer.
+	defer s.closeDone()
 	for {
 		select {
 
 		case apiEvent := <-s.apiEvents:
 			switch apiEvent.eventType {
 			case closeServer:
+				s.closeDone()
 				_ = s.connectionListener.Close()
 				// close all open connections
 				for _, c := range s.connectionsMap {
@@ -355,35 +444,36 @@ func (s *stompServer) run() {
 }
 
 func (s *stompServer) handleConnectionEvent(e *ConnEvent) {
-
-	s.callbackLock.RLock()
-	defer s.callbackLock.RUnlock()
-
 	switch e.eventType {
 	case ConnectionStarting:
+		connectionCallback := s.snapshotConnectionEventCallback(e.eventType)
 		s.connectionsMap[e.conn.GetId()] = e.conn
-		if fn, exists := s.connectionEventCallbacks[ConnectionStarting]; exists {
-			fn(e)
+		if connectionCallback != nil {
+			connectionCallback(e)
 		}
 
 	case ConnectionClosed:
+		connectionCallback := s.snapshotConnectionEventCallback(e.eventType)
+		unsubscribeCallbacks := s.snapshotUnsubscribeCallbacks()
 		delete(s.connectionsMap, e.conn.GetId())
 		for _, connSubscriptions := range s.subscriptionsMap {
 			conSub, ok := connSubscriptions[e.conn.GetId()]
 			if ok {
 				delete(connSubscriptions, e.conn.GetId())
 				for _, sub := range conSub.subscriptions {
-					for _, callback := range s.unsubscribeCallbacks {
+					for _, callback := range unsubscribeCallbacks {
 						callback(e.conn.GetId(), sub.id, sub.destination)
 					}
 				}
 			}
 		}
-		if fn, exists := s.connectionEventCallbacks[ConnectionClosed]; exists {
-			fn(e)
+		if connectionCallback != nil {
+			connectionCallback(e)
 		}
 
 	case SubscribeToTopic:
+		connectionCallback := s.snapshotConnectionEventCallback(e.eventType)
+		subscribeCallbacks := s.snapshotSubscribeCallbacks()
 		subsMap, ok := s.subscriptionsMap[e.destination]
 		if !ok {
 			subsMap = make(map[string]*connSubscriptions)
@@ -398,14 +488,16 @@ func (s *stompServer) handleConnectionEvent(e *ConnEvent) {
 		conSub.subscriptions[e.sub.id] = e.sub
 
 		// notify listeners
-		for _, callback := range s.subscribeCallbacks {
+		for _, callback := range subscribeCallbacks {
 			callback(e.conn.GetId(), e.sub.id, e.destination, e.frame)
 		}
-		if fn, exists := s.connectionEventCallbacks[SubscribeToTopic]; exists {
-			fn(e)
+		if connectionCallback != nil {
+			connectionCallback(e)
 		}
 
 	case UnsubscribeFromTopic:
+		connectionCallback := s.snapshotConnectionEventCallback(e.eventType)
+		unsubscribeCallbacks := s.snapshotUnsubscribeCallbacks()
 		subs, ok := s.subscriptionsMap[e.destination]
 		if ok {
 			var conSub *connSubscriptions
@@ -415,25 +507,27 @@ func (s *stompServer) handleConnectionEvent(e *ConnEvent) {
 				if ok {
 					delete(conSub.subscriptions, e.sub.id)
 					// notify listeners
-					for _, callback := range s.unsubscribeCallbacks {
+					for _, callback := range unsubscribeCallbacks {
 						callback(e.conn.GetId(), e.sub.id, e.destination)
 					}
 				}
 			}
 		}
-		if fn, exists := s.connectionEventCallbacks[UnsubscribeFromTopic]; exists {
-			fn(e)
+		if connectionCallback != nil {
+			connectionCallback(e)
 		}
 
 	case IncomingMessage:
 		if s.config.IsAppRequestDestination(e.destination) && e.conn != nil {
+			applicationRequestCallbacks := s.snapshotApplicationRequestCallbacks()
 			// notify app listeners
-			for _, callback := range s.applicationRequestCallbacks {
+			for _, callback := range applicationRequestCallbacks {
 				callback(e.destination, e.frame.Body, e.conn.GetId())
 			}
 		}
-		if fn, exists := s.connectionEventCallbacks[IncomingMessage]; exists {
-			fn(e)
+		connectionCallback := s.snapshotConnectionEventCallback(e.eventType)
+		if connectionCallback != nil {
+			connectionCallback(e)
 		}
 	}
 }

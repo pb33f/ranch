@@ -43,7 +43,6 @@ type messageHandler struct {
 	destination     *uuid.UUID
 	channel         *Channel
 	requestMessage  *model.Message
-	runCount        int64
 	ignoreId        bool
 	handlerContext  context.Context
 	wrapperFunction MessageHandlerContextFunction
@@ -51,7 +50,10 @@ type messageHandler struct {
 	errorHandler    MessageErrorContextFunction
 	subscriptionId  *uuid.UUID
 	invokeOnce      *sync.Once
+	setupOnce       sync.Once
 	channelManager  ChannelManager
+	closeMu         sync.Mutex
+	closed          bool
 }
 
 func (msgHandler *messageHandler) Handle(successHandler MessageHandlerFunction, errorHandler MessageErrorFunction) {
@@ -79,18 +81,32 @@ func (msgHandler *messageHandler) HandleContext(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	msgHandler.handlerContext = ctx
-	msgHandler.successHandler = successHandler
-	msgHandler.errorHandler = errorHandler
+	msgHandler.setupOnce.Do(func() {
+		msgHandler.handlerContext = ctx
+		msgHandler.successHandler = successHandler
+		msgHandler.errorHandler = errorHandler
 
-	msgHandler.subscriptionId, _ = msgHandler.channelManager.SubscribeChannelHandlerContext(
-		msgHandler.channel.Name, msgHandler.wrapperFunction, false)
+		subscriptionId, _ := msgHandler.channelManager.SubscribeChannelHandlerContext(
+			msgHandler.channel.Name, msgHandler.wrapperFunction, false)
+		msgHandler.closeMu.Lock()
+		msgHandler.subscriptionId = subscriptionId
+		closed := msgHandler.closed
+		msgHandler.closeMu.Unlock()
+		if closed && subscriptionId != nil {
+			_ = msgHandler.channelManager.UnsubscribeChannelHandler(
+				msgHandler.channel.Name, subscriptionId)
+		}
+	})
 }
 
 func (msgHandler *messageHandler) Close() {
-	if msgHandler.subscriptionId != nil {
+	msgHandler.closeMu.Lock()
+	msgHandler.closed = true
+	subscriptionId := msgHandler.subscriptionId
+	msgHandler.closeMu.Unlock()
+	if subscriptionId != nil {
 		_ = msgHandler.channelManager.UnsubscribeChannelHandler(
-			msgHandler.channel.Name, msgHandler.subscriptionId)
+			msgHandler.channel.Name, subscriptionId)
 	}
 }
 

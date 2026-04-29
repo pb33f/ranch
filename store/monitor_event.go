@@ -1,12 +1,12 @@
 package store
 
-import "github.com/pb33f/ranch/bus"
+import "github.com/pb33f/ranch/monitor"
 
 const (
 	// StoreCreatedEvt is emitted when a store is created.
-	StoreCreatedEvt bus.MonitorEventType = "store.created"
+	StoreCreatedEvt = monitor.StoreCreatedEvt
 	// StoreDestroyedEvt is emitted when a store is destroyed.
-	StoreDestroyedEvt bus.MonitorEventType = "store.destroyed"
+	StoreDestroyedEvt = monitor.StoreDestroyedEvt
 	// StoreInitializedEvt is emitted when a store is initialized.
-	StoreInitializedEvt bus.MonitorEventType = "store.initialized"
+	StoreInitializedEvt = monitor.StoreInitializedEvt
 )

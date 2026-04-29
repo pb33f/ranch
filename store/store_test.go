@@ -624,6 +624,22 @@ func TestBusStore_InitGalacticStore(t *testing.T) {
 	assert.Equal(t, conn.lastMessage()["request"], "closeStore")
 }
 
+func TestBusStore_GalacticStoreMalformedResponsesDoNotPanic(t *testing.T) {
+	store, _, bus := testGalacticStore(nil)
+	payloads := []any{
+		"not-bytes",
+		[]byte(`{"storeId":"testStore","responseType":12}`),
+		[]byte(`{"storeId":"testStore","responseType":"storeContentResponse","items":[]}`),
+		[]byte(`{"storeId":"testStore","responseType":"updateStoreResponse","itemId":12}`),
+	}
+
+	for _, payload := range payloads {
+		assert.NoError(t, bus.SendResponseMessage("sync-channel", payload, nil))
+	}
+	assert.NoError(t, bus.GetChannelManager().WaitForChannel("sync-channel"))
+	assert.Empty(t, store.AllValues())
+}
+
 func TestBusStore_GalacticStoreUpdates(t *testing.T) {
 	store, _, bus := testGalacticStore(reflect.TypeOf(MockStoreItem{}))
 

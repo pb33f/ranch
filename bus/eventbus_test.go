@@ -4,6 +4,7 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 var evtBusTest *transportEventBus
@@ -209,6 +211,29 @@ func TestEventBus_ListenOnceForDestination(t *testing.T) {
 	}
 	assert.NoError(t, evtbusTestManager.WaitForChannel(evtbusTestChannelName))
 	assert.Equal(t, 1, count)
+	destroyTestChannel()
+}
+
+func TestEventBus_ListenOnceUnsubscribesAfterMatchingMessage(t *testing.T) {
+	channel := createTestChannel()
+	dest := uuid.New()
+	noiseDest := uuid.New()
+	handler, _ := evtBusTest.ListenOnceForDestination(evtbusTestChannelName, &dest)
+	count := 0
+	handler.Handle(
+		func(msg *model.Message) {
+			count++
+		},
+		func(err error) {})
+
+	assert.NoError(t, evtBusTest.SendResponseMessage(evtbusTestChannelName, "noise", &noiseDest))
+	assert.NoError(t, evtbusTestManager.WaitForChannel(evtbusTestChannelName))
+	assert.True(t, channel.ContainsHandlers())
+
+	assert.NoError(t, evtBusTest.SendResponseMessage(evtbusTestChannelName, "match", &dest))
+	assert.NoError(t, evtbusTestManager.WaitForChannel(evtbusTestChannelName))
+	assert.Equal(t, 1, count)
+	assert.False(t, channel.ContainsHandlers())
 	destroyTestChannel()
 }
 
@@ -436,6 +461,67 @@ func TestEventBus_RequestOnce(t *testing.T) {
 	destroyTestChannel()
 }
 
+func TestEventBus_RequestOnceUnsubscribesAfterResponse(t *testing.T) {
+	channel := createTestChannel()
+	requestHandler, _ := evtBusTest.ListenRequestStream(evtbusTestChannelName)
+	requestHandler.Handle(
+		func(msg *model.Message) {
+			assert.NoError(t, evtBusTest.SendResponseMessage(evtbusTestChannelName, "done", msg.DestinationId))
+		},
+		func(err error) {})
+
+	count := 0
+	responseHandler, _ := evtBusTest.RequestOnce(evtbusTestChannelName, "request")
+	responseHandler.Handle(
+		func(msg *model.Message) {
+			count++
+		},
+		func(err error) {})
+
+	assert.NoError(t, responseHandler.Fire())
+	assert.NoError(t, evtbusTestManager.WaitForChannel(evtbusTestChannelName))
+	assert.Equal(t, 1, count)
+
+	requestHandler.Close()
+	assert.False(t, channel.ContainsHandlers())
+	destroyTestChannel()
+}
+
+func TestEventBus_MessageHandlerHandleContextIsSingleUse(t *testing.T) {
+	b := NewEventBus().(*transportEventBus)
+	channelName := "single-use-handler"
+	channel := b.GetChannelManager().CreateChannel(channelName)
+
+	handler, err := b.ListenStream(channelName)
+	assert.NoError(t, err)
+
+	type contextKey struct{}
+	var firstCount int32
+	var secondCount int32
+
+	handler.HandleContext(
+		context.WithValue(context.Background(), contextKey{}, "first"),
+		func(ctx context.Context, msg *model.Message) {
+			inc(&firstCount)
+		},
+		func(context.Context, error) {})
+
+	handler.HandleContext(
+		context.WithValue(context.Background(), contextKey{}, "second"),
+		func(ctx context.Context, msg *model.Message) {
+			inc(&secondCount)
+		},
+		func(context.Context, error) {})
+
+	msgHandler := handler.(*messageHandler)
+	assert.Equal(t, "first", msgHandler.handlerContext.Value(contextKey{}))
+	assert.Len(t, channel.handlersSnapshot(), 1)
+	assert.NoError(t, b.SendResponseMessage(channelName, "payload", nil))
+	assert.NoError(t, b.GetChannelManager().WaitForChannel(channelName))
+	assert.Equal(t, int32(1), firstCount)
+	assert.Equal(t, int32(0), secondCount)
+}
+
 func TestEventBus_RequestOnceForDestination(t *testing.T) {
 	createTestChannel()
 	dest := uuid.New()
@@ -580,6 +666,27 @@ func TestEventBus_HandleSingleRunError(t *testing.T) {
 	destroyTestChannel()
 }
 
+func TestEventBus_ErrorDirectionHandlerInvokesErrorOnly(t *testing.T) {
+	channel := createTestChannel()
+	handler := evtBusTest.wrapMessageHandler(channel, model.ErrorDir, true, false, nil, false)
+	successCount := 0
+	errorCount := 0
+	handler.Handle(
+		func(msg *model.Message) {
+			successCount++
+		},
+		func(err error) {
+			errorCount++
+		})
+
+	assert.NoError(t, evtBusTest.SendErrorMessage(evtbusTestChannelName, fmt.Errorf("whoops"), nil))
+	assert.NoError(t, evtbusTestManager.WaitForChannel(evtbusTestChannelName))
+	assert.Equal(t, 0, successCount)
+	assert.Equal(t, 1, errorCount)
+	handler.Close()
+	destroyTestChannel()
+}
+
 func TestEventBus_RequestOnceNoChannel(t *testing.T) {
 	_, err := evtBusTest.RequestOnce("missing-Channel", 0)
 	assert.NotNil(t, err)
@@ -681,4 +788,22 @@ func TestBifrostEventBus_AddMonitorEventListener(t *testing.T) {
 	assert.Equal(t, listener1Count, 3)
 	assert.Equal(t, listener2Count, 2)
 	assert.Equal(t, listener3Count, 5)
+}
+
+func TestEventBus_MonitorListenerCanRemoveItself(t *testing.T) {
+	bus := newTestEventBus()
+	done := make(chan struct{})
+	var listener MonitorEventListenerId
+	listener = bus.AddMonitorEventListener(func(event *MonitorEvent) {
+		bus.RemoveMonitorEventListener(listener)
+		close(done)
+	}, ChannelCreatedEvt)
+
+	go bus.SendMonitorEvent(ChannelCreatedEvt, "test-channel", nil)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("monitor listener deadlocked while removing itself")
+	}
 }

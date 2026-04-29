@@ -87,17 +87,20 @@ func (m *storeManager) CreateStore(name string) BusStore {
 
 func (m *storeManager) CreateStoreWithType(name string, itemType reflect.Type) BusStore {
 	m.storesLock.Lock()
-	defer m.storesLock.Unlock()
 
 	store, ok := m.stores[name]
 
 	if ok {
+		m.storesLock.Unlock()
 		return store
 	}
 
-	m.stores[name] = newBusStore(name, m.eventBus, itemType, nil, m.logger)
-	go m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
-	return m.stores[name]
+	store = newBusStore(name, m.eventBus, itemType, nil, m.logger)
+	m.stores[name] = store
+	m.storesLock.Unlock()
+
+	m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
+	return store
 }
 
 func (m *storeManager) GetStore(name string) BusStore {
@@ -109,14 +112,15 @@ func (m *storeManager) GetStore(name string) BusStore {
 
 func (m *storeManager) DestroyStore(name string) bool {
 	m.storesLock.Lock()
-	defer m.storesLock.Unlock()
 
 	store, ok := m.stores[name]
 	if ok {
 		store.(*busStore).OnDestroy()
 		delete(m.stores, name)
-
-		go m.eventBus.SendMonitorEvent(StoreDestroyedEvt, name, nil)
+	}
+	m.storesLock.Unlock()
+	if ok {
+		m.eventBus.SendMonitorEvent(StoreDestroyedEvt, name, nil)
 	}
 	return ok
 }
@@ -173,21 +177,25 @@ func (m *storeManager) OpenGalacticStoreWithItemType(
 	}
 
 	m.storesLock.Lock()
-	defer m.storesLock.Unlock()
 
 	store, ok := m.stores[name]
 
 	if ok {
 		if store.IsGalactic() {
+			m.storesLock.Unlock()
 			return store, nil
 		} else {
+			m.storesLock.Unlock()
 			return store, fmt.Errorf("cannot open galactic store: there is a local store with the same name")
 		}
 	}
 
-	m.stores[name] = newBusStore(name, m.eventBus, itemType, &galacticStoreConfig{
+	store = newBusStore(name, m.eventBus, itemType, &galacticStoreConfig{
 		syncChannelConfig: chanConf,
 	}, m.logger)
-	go m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
-	return m.stores[name], nil
+	m.stores[name] = store
+	m.storesLock.Unlock()
+
+	m.eventBus.SendMonitorEvent(StoreCreatedEvt, name, nil)
+	return store, nil
 }

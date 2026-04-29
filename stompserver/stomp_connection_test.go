@@ -121,6 +121,35 @@ func TestStompConn_CloseQueuesConnectionClosedWhenEventsFull(t *testing.T) {
 	}
 }
 
+func TestStompConn_CloseSkipsConnectionClosedWhenServerDone(t *testing.T) {
+	events := make(chan *ConnEvent, 1)
+	events <- &ConnEvent{eventType: ConnectionStarting}
+	serverDone := make(chan struct{})
+	close(serverDone)
+
+	rawConn := NewMockRawConnection()
+	stompConn := newStompConn(rawConn, NewStompConfig(0, []string{}), events, serverDone).(*stompConn)
+
+	closed := make(chan struct{})
+	go func() {
+		stompConn.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("connection close blocked while server was already done")
+	}
+
+	<-events
+	select {
+	case e := <-events:
+		t.Fatalf("unexpected connection event after server shutdown: %v", e.eventType)
+	default:
+	}
+}
+
 func TestStompConn_Connect(t *testing.T) {
 	stompConn, rawConn, events := getTestStompConn(NewStompConfig(0, []string{}), nil)
 

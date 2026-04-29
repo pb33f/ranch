@@ -3,38 +3,33 @@
 
 package bus
 
+import "github.com/pb33f/ranch/monitor"
+
 // MonitorEventType names a bus monitor event.
-type MonitorEventType string
+type MonitorEventType = monitor.EventType
 
 const (
 	// ChannelCreatedEvt is emitted when a bus channel is created.
-	ChannelCreatedEvt MonitorEventType = "bus.channel.created"
+	ChannelCreatedEvt = monitor.ChannelCreatedEvt
 	// ChannelDestroyedEvt is emitted when a bus channel is destroyed.
-	ChannelDestroyedEvt MonitorEventType = "bus.channel.destroyed"
+	ChannelDestroyedEvt = monitor.ChannelDestroyedEvt
 	// ChannelSubscriberJoinedEvt is emitted when a handler subscribes to a channel.
-	ChannelSubscriberJoinedEvt MonitorEventType = "bus.channel.subscriber.joined"
+	ChannelSubscriberJoinedEvt = monitor.ChannelSubscriberJoinedEvt
 	// ChannelSubscriberLeftEvt is emitted when a handler unsubscribes from a channel.
-	ChannelSubscriberLeftEvt MonitorEventType = "bus.channel.subscriber.left"
+	ChannelSubscriberLeftEvt = monitor.ChannelSubscriberLeftEvt
 	// BrokerSubscribedEvt is emitted when a broker subscription is created.
-	BrokerSubscribedEvt MonitorEventType = "bus.broker.subscribed"
+	BrokerSubscribedEvt = monitor.BrokerSubscribedEvt
 	// BrokerUnsubscribedEvt is emitted when a broker subscription is removed.
-	BrokerUnsubscribedEvt MonitorEventType = "bus.broker.unsubscribed"
+	BrokerUnsubscribedEvt = monitor.BrokerUnsubscribedEvt
 )
 
 // MonitorEventHandler receives monitor events.
-type MonitorEventHandler func(event *MonitorEvent)
+type MonitorEventHandler = monitor.Handler
 
 // MonitorEvent describes a lifecycle event published by bus components.
-type MonitorEvent struct {
-	// Type of the event
-	EventType MonitorEventType
-	// The name of the channel or the store related to this event
-	EntityName string
-	// Optional event data
-	Data any
-}
+type MonitorEvent = monitor.Event
 
 // NewMonitorEvent creates a monitor event for an entity and optional data payload.
 func NewMonitorEvent(evtType MonitorEventType, entityName string, data any) *MonitorEvent {
-	return &MonitorEvent{EventType: evtType, Data: data, EntityName: entityName}
+	return monitor.NewEvent(evtType, entityName, data)
 }

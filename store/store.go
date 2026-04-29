@@ -149,7 +149,12 @@ func initGalacticStore(store *busStore) {
 
 	store.storeSynHandler.Handle(
 		func(msg *model.Message) {
-			d := msg.Payload.([]byte)
+			d, ok := msg.Payload.([]byte)
+			if !ok {
+				store.log().Warn("failed to read galactic store response payload",
+					"payloadType", fmt.Sprintf("%T", msg.Payload))
+				return
+			}
 			var storeResponse map[string]any
 
 			err := json.Unmarshal(d, &storeResponse)
@@ -158,20 +163,31 @@ func initGalacticStore(store *busStore) {
 				return
 			}
 
-			if storeResponse["storeId"] != store.GetName() {
+			storeId, _ := storeResponse["storeId"].(string)
+			if storeId != store.GetName() {
 				// the response is for another store
 				return
 			}
 
-			responseType := storeResponse["responseType"].(string)
+			responseType, ok := storeResponse["responseType"].(string)
+			if !ok {
+				store.log().Warn("failed to read galactic store response type",
+					"value", storeResponse["responseType"])
+				return
+			}
 
 			switch responseType {
 			case "storeContentResponse":
+				items, ok := storeResponse["items"].(map[string]any)
+				if !ok {
+					store.log().Warn("failed to read galactic store content items",
+						"value", storeResponse["items"])
+					return
+				}
 
 				store.itemsMu.Lock()
 
 				store.updateVersionFromResponse(storeResponse)
-				items := storeResponse["items"].(map[string]any)
 				store.items = make(map[string]any)
 				for key, val := range items {
 					deserializedValue, err := store.deserializeRawValue(val)
@@ -185,15 +201,20 @@ func initGalacticStore(store *busStore) {
 				store.itemsMu.Unlock()
 				store.Initialize()
 			case "updateStoreResponse":
+				itemId, ok := storeResponse["itemId"].(string)
+				if !ok {
+					store.log().Warn("failed to read galactic store update item id",
+						"value", storeResponse["itemId"])
+					return
+				}
 
 				store.itemsMu.Lock()
 
 				store.updateVersionFromResponse(storeResponse)
 				newItemRaw, ok := storeResponse["newItemValue"]
-				itemId := storeResponse["itemId"].(string)
 				var change *StoreChange
 				if !ok || newItemRaw == nil {
-					change, _ = store.removeInternal(itemId, "galacticSyncRemove")
+					change, _ = store.removeInternalContext(itemId, "galacticSyncRemove")
 				} else {
 					newItemValue, err := store.deserializeRawValue(newItemRaw)
 					if err != nil {
@@ -201,7 +222,7 @@ func initGalacticStore(store *busStore) {
 						store.log().Warn("failed to deserialize store item value", "err", err)
 						return
 					}
-					change = store.putInternal(itemId, newItemValue, "galacticSyncUpdate")
+					change = store.putInternalContext(itemId, newItemValue, "galacticSyncUpdate")
 				}
 				store.itemsMu.Unlock()
 				store.onStoreChange(context.Background(), change)
@@ -356,10 +377,6 @@ func (store *busStore) sendUpdateStoreRequest(ctx context.Context, id string, va
 	store.sendGalacticRequestContext(ctx, "updateStore", updateReq)
 }
 
-func (store *busStore) putInternal(id string, value any, state any) *StoreChange {
-	return store.putInternalContext(id, value, state)
-}
-
 func (store *busStore) putInternalContext(id string, value any, state any) *StoreChange {
 	if !store.IsGalactic() {
 		store.storeVersion++
@@ -425,10 +442,6 @@ func (store *busStore) removeGalactic(ctx context.Context, id string) bool {
 		return true
 	}
 	return false
-}
-
-func (store *busStore) removeInternal(id string, state any) (*StoreChange, bool) {
-	return store.removeInternalContext(id, state)
 }
 
 func (store *busStore) removeInternalContext(id string, state any) (*StoreChange, bool) {

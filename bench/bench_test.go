@@ -1,33 +1,21 @@
 package bench
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-stomp/stomp/v3/frame"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
 )
 
 var (
-	sinkBytes []byte
-	sinkFrame *frame.Frame
-	sinkChan  *bus.Channel
+	sinkChan *bus.Channel
 )
 
 var errBenchChannelMissing = errors.New("channel does not exist")
-
-var jsonBufferPool = sync.Pool{
-	New: func() any {
-		return new(bytes.Buffer)
-	},
-}
 
 func BenchmarkChannelSendOneHandler(b *testing.B) {
 	eb := bus.NewEventBus()
@@ -160,92 +148,5 @@ func BenchmarkChannelManagerGetChannelParallel(b *testing.B) {
 	})
 	b.Run("atomic-cow-map", func(b *testing.B) {
 		benchLookup(b, atomicMapLookup)
-	})
-}
-
-func BenchmarkStompFrameCloneFanOut(b *testing.B) {
-	body := bytes.Repeat([]byte("x"), 4096)
-	f := frame.New(
-		frame.MESSAGE,
-		frame.Destination, "/topic/bench",
-		frame.ContentLength, strconv.Itoa(len(body)),
-		frame.ContentType, "application/json;charset=UTF-8")
-	f.Body = body
-
-	for _, subscribers := range []int{1, 10, 100} {
-		b.Run(fmt.Sprintf("deep-clone/%d-subscribers", subscribers), func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				for sub := 0; sub < subscribers; sub++ {
-					cloned := f.Clone()
-					cloned.Header.Add(frame.Subscription, strconv.Itoa(sub))
-					sinkFrame = cloned
-				}
-			}
-		})
-		b.Run(fmt.Sprintf("headers-only/%d-subscribers", subscribers), func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				for sub := 0; sub < subscribers; sub++ {
-					cloned := cloneFrameHeadersForBench(f)
-					cloned.Header.Add(frame.Subscription, strconv.Itoa(sub))
-					sinkFrame = cloned
-				}
-			}
-		})
-	}
-}
-
-func cloneFrameHeadersForBench(f *frame.Frame) *frame.Frame {
-	cloned := &frame.Frame{
-		Command: f.Command,
-		Body:    f.Body,
-	}
-	if f.Header != nil {
-		cloned.Header = f.Header.Clone()
-	}
-	return cloned
-}
-
-func BenchmarkFabricPayloadMarshal(b *testing.B) {
-	payload := model.Response{
-		Destination:    "bench-channel",
-		HttpStatusCode: 200,
-		Payload: map[string]any{
-			"name":   "bench",
-			"count":  42,
-			"active": true,
-			"items":  []string{"alpha", "bravo", "charlie"},
-		},
-		Headers: map[string]any{"x-bench": "true"},
-	}
-
-	b.ReportAllocs()
-	b.Run("marshal", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			data, err := json.Marshal(payload)
-			if err != nil {
-				b.Fatal(err)
-			}
-			sinkBytes = data
-		}
-	})
-	b.Run("pooled-encoder-copy", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			buf := jsonBufferPool.Get().(*bytes.Buffer)
-			buf.Reset()
-			if err := json.NewEncoder(buf).Encode(payload); err != nil {
-				jsonBufferPool.Put(buf)
-				b.Fatal(err)
-			}
-			data := buf.Bytes()
-			if len(data) > 0 && data[len(data)-1] == '\n' {
-				data = data[:len(data)-1]
-			}
-			sinkBytes = append([]byte(nil), data...)
-			jsonBufferPool.Put(buf)
-		}
 	})
 }
