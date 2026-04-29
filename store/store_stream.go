@@ -9,9 +9,10 @@ import (
 	"sync"
 )
 
+// StoreChangeHandlerFunction handles committed store changes.
 type StoreChangeHandlerFunction func(change *StoreChange)
 
-// Interface for subscribing for store changes
+// StoreStream subscribes to store changes.
 type StoreStream interface {
 	// Subscribe to the store changes stream.
 	Subscribe(handler StoreChangeHandlerFunction) error

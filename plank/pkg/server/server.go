@@ -32,8 +32,11 @@ import (
 	"github.com/pb33f/ranch/store"
 )
 
+// RANCH_SERVER_ONLINE_CHANNEL carries the Plank server online notification.
 const RANCH_SERVER_ONLINE_CHANNEL = bus.RANCH_INTERNAL_CHANNEL_PREFIX + "ranch-online-notify"
-const AllMethodsWildcard = "*" // every method, open the gates!
+
+// AllMethodsWildcard names prefix bridge handlers that accept any HTTP method.
+const AllMethodsWildcard = "*"
 
 type httpBridgeMatchMode int
 
@@ -54,7 +57,6 @@ func NewPlatformServer(config *PlatformServerConfig) PlatformServer {
 	sanitizeConfigRootPath(config)
 	ps.serverConfig = config
 	ps.ServerAvailability = &ServerAvailability{}
-	ps.messageBridgeMap = make(map[string]*MessageBridge)
 	ps.routeHandles = make(map[string]fabric.RouteHandle)
 	ps.readyCh = make(chan struct{})
 	ps.eventbus = bus.NewEventBusWithLogger(config.Logger)
@@ -125,7 +127,6 @@ func NewPlatformServerFromConfig(configPath string) (PlatformServer, error) {
 
 	ps.serverConfig = &config
 	ps.ServerAvailability = &ServerAvailability{}
-	ps.messageBridgeMap = make(map[string]*MessageBridge)
 	ps.routeHandles = make(map[string]fabric.RouteHandle)
 	ps.readyCh = make(chan struct{})
 	ps.initialize()
@@ -478,113 +479,13 @@ func (ps *platformServer) drainPendingRoutes() error {
 // SetHttpChannelBridge establishes a conduit between the transport service channel and an HTTP endpoint
 // that allows a client to invoke the service via REST.
 func (ps *platformServer) SetHttpChannelBridge(bridgeConfig *service.RESTBridgeConfig) {
-	ps.setHttpChannelBridge(bridgeConfig, httpBridgeExact)
+	ps.bridges.SetExact(bridgeConfig)
 }
 
 // SetHttpPathPrefixChannelBridge establishes a conduit between the transport service channel and a path prefix
 // every request on this prefix will be sent through to the target service, all methods, all sub paths, lock, stock and barrel.
 func (ps *platformServer) SetHttpPathPrefixChannelBridge(bridgeConfig *service.RESTBridgeConfig) {
-	ps.setHttpChannelBridge(bridgeConfig, httpBridgePrefix)
-}
-
-func (ps *platformServer) setHttpChannelBridge(bridgeConfig *service.RESTBridgeConfig, mode httpBridgeMatchMode) {
-	ps.lock.Lock()
-	defer ps.lock.Unlock()
-
-	endpointHandlerKey := bridgeEndpointHandlerKey(bridgeConfig, mode)
-
-	if _, ok := ps.endpointHandlerMap[endpointHandlerKey]; ok {
-		ps.logDuplicateBridge(bridgeConfig, mode)
-		return
-	}
-
-	if ps.serviceChanToBridgeEndpoints[bridgeConfig.ServiceChannel] == nil {
-		ps.serviceChanToBridgeEndpoints[bridgeConfig.ServiceChannel] = make([]string, 0)
-	}
-
-	ps.ensureMessageBridge(bridgeConfig.ServiceChannel)
-	ps.endpointHandlerMap[endpointHandlerKey] = ps.buildEndpointHandler(
-		bridgeConfig.ServiceChannel,
-		bridgeConfig.FabricRequestBuilder,
-		ps.serverConfig.RestBridgeTimeout,
-		ps.messageBridgeMap[bridgeConfig.ServiceChannel].payloadChannel)
-
-	ps.serviceChanToBridgeEndpoints[bridgeConfig.ServiceChannel] = append(
-		ps.serviceChanToBridgeEndpoints[bridgeConfig.ServiceChannel], endpointHandlerKey)
-
-	ps.registerHttpBridgeRoute(bridgeConfig, endpointHandlerKey, mode)
-	ps.logBridgeRegistration(bridgeConfig, mode)
-}
-
-func bridgeEndpointHandlerKey(bridgeConfig *service.RESTBridgeConfig, mode httpBridgeMatchMode) string {
-	if mode == httpBridgePrefix {
-		return bridgeConfig.Uri + "-" + AllMethodsWildcard
-	}
-	return bridgeConfig.Uri + "-" + bridgeConfig.Method
-}
-
-func (ps *platformServer) ensureMessageBridge(serviceChannel string) {
-	if _, exists := ps.messageBridgeMap[serviceChannel]; exists {
-		return
-	}
-
-	handler, _ := ps.eventbus.ListenStream(serviceChannel)
-	ps.messageBridgeMap[serviceChannel] = &MessageBridge{
-		ServiceListenStream: handler,
-		payloadChannel:      make(chan *model.Message, 100),
-	}
-	handler.Handle(func(message *model.Message) {
-		ps.messageBridgeMap[serviceChannel].payloadChannel <- message
-	}, func(err error) {})
-}
-
-func (ps *platformServer) registerHttpBridgeRoute(
-	bridgeConfig *service.RESTBridgeConfig, endpointHandlerKey string, mode httpBridgeMatchMode) {
-	handler := ps.endpointHandlerMap[endpointHandlerKey]
-	if mode == httpBridgePrefix {
-		ps.router.
-			PathPrefix(bridgeConfig.Uri).
-			Name(endpointHandlerKey).
-			Handler(handler)
-		return
-	}
-
-	permittedMethods := []string{bridgeConfig.Method}
-	if bridgeConfig.AllowHead {
-		permittedMethods = append(permittedMethods, http.MethodHead)
-	}
-	if bridgeConfig.AllowOptions {
-		permittedMethods = append(permittedMethods, http.MethodOptions)
-	}
-
-	ps.router.
-		Path(bridgeConfig.Uri).
-		Methods(permittedMethods...).
-		Name(fmt.Sprintf("%s-%s", bridgeConfig.Uri, bridgeConfig.Method)).
-		Handler(handler)
-}
-
-func (ps *platformServer) logDuplicateBridge(bridgeConfig *service.RESTBridgeConfig, mode httpBridgeMatchMode) {
-	if mode == httpBridgePrefix {
-		ps.serverConfig.Logger.Warn("[ranch] path prefix is already being handled. "+
-			"Try another prefix or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
-		return
-	}
-
-	ps.serverConfig.Logger.Warn("[ranch] endpoint is already associated with a handler, "+
-		"Try another endpoint or remove it before assigning a new handler", "uri", bridgeConfig.Uri, "method", bridgeConfig.Method)
-}
-
-func (ps *platformServer) logBridgeRegistration(bridgeConfig *service.RESTBridgeConfig, mode httpBridgeMatchMode) {
-	if mode == httpBridgePrefix {
-		ps.serverConfig.Logger.Info(
-			"[ranch] Service channel is now bridged to a REST path prefix",
-			"channel", bridgeConfig.ServiceChannel, "url", bridgeConfig.Uri)
-		return
-	}
-	ps.serverConfig.Logger.Info(
-		"[ranch] service channel is bridged to a REST endpoint",
-		"channel", bridgeConfig.ServiceChannel, "url", bridgeConfig.Uri, "method", bridgeConfig.Method)
+	ps.bridges.SetPrefix(bridgeConfig)
 }
 
 // GetMiddlewareManager returns the MiddleManager instance
@@ -612,23 +513,7 @@ func (c *platformServer) CustomizeTLSConfig(tls *tls.Config) error {
 
 // clearHttpChannelBridgesForService removes routes associated with serviceChannel while keeping the rest intact.
 func (ps *platformServer) clearHttpChannelBridgesForService(serviceChannel string) *routing.Router {
-	ps.lock.Lock()
-	defer ps.lock.Unlock()
-
-	lookupMap := make(map[string]bool)
-	for _, key := range ps.serviceChanToBridgeEndpoints[serviceChannel] {
-		lookupMap[key] = true
-	}
-	newRouter := ps.router.CloneExcluding(lookupMap)
-
-	// if in override mode delete existing mappings associated with the service
-	existingMappings := ps.serviceChanToBridgeEndpoints[serviceChannel]
-	ps.serviceChanToBridgeEndpoints[serviceChannel] = make([]string, 0)
-	for _, handlerKey := range existingMappings {
-		ps.serverConfig.Logger.Info("[ranch] Removing existing service - REST mapping", "key", handlerKey, "channel", serviceChannel)
-		delete(ps.endpointHandlerMap, handlerKey)
-	}
-	return newRouter
+	return ps.bridges.ClearForService(serviceChannel)
 }
 
 func (ps *platformServer) getSubRoute(name string) (*routing.Route, error) {
@@ -645,6 +530,9 @@ func (ps *platformServer) loadGlobalHttpHandler(h *routing.Router) {
 	ps.router = h
 	if updater, ok := ps.middlewareManager.(interface{ SetRouter(*routing.Router) }); ok {
 		updater.SetRouter(h)
+	}
+	if ps.bridges != nil {
+		ps.bridges.SetRouter(h)
 	}
 	ps.HttpServer.Handler = handlers.RecoveryHandler()(
 		handlers.CompressHandler(

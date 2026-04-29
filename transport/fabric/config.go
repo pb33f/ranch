@@ -8,6 +8,7 @@ import (
 	"github.com/pb33f/ranch/stompserver"
 )
 
+// EndpointConfig configures the Fabric STOMP endpoint.
 type EndpointConfig struct {
 	Logger *slog.Logger `json:"-"`
 

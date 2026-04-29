@@ -9,6 +9,7 @@ import (
 	"os"
 )
 
+// NoDirFileSystem wraps http.Dir and hides directory listings unless index.html exists.
 type NoDirFileSystem struct {
 	fs http.Dir
 }
@@ -45,6 +46,7 @@ func (e neuteredStatFile) Stat() (os.FileInfo, error) {
 	return s, err
 }
 
+// Open opens name and returns os.ErrNotExist for directories without index.html.
 func (nd NoDirFileSystem) Open(name string) (http.File, error) {
 	f, err := nd.fs.Open(name)
 	if err != nil {

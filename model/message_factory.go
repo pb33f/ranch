@@ -5,6 +5,7 @@ package model
 
 import "github.com/google/uuid"
 
+// MessageConfig contains the fields used by message factory helpers.
 type MessageConfig struct {
 	Id            *uuid.UUID
 	DestinationId *uuid.UUID
@@ -23,6 +24,7 @@ func checkId(msgConfig *MessageConfig) {
 	}
 }
 
+// GenerateRequest creates a request message from msgConfig.
 func GenerateRequest(msgConfig *MessageConfig) *Message {
 	checkId(msgConfig)
 	return &Message{
@@ -35,6 +37,7 @@ func GenerateRequest(msgConfig *MessageConfig) *Message {
 		Direction:     RequestDir}
 }
 
+// GenerateResponse creates a response message from msgConfig.
 func GenerateResponse(msgConfig *MessageConfig) *Message {
 	checkId(msgConfig)
 	return &Message{
@@ -47,6 +50,7 @@ func GenerateResponse(msgConfig *MessageConfig) *Message {
 		Direction:     ResponseDir}
 }
 
+// GenerateError creates an error message from msgConfig.
 func GenerateError(msgConfig *MessageConfig) *Message {
 	checkId(msgConfig)
 	return &Message{

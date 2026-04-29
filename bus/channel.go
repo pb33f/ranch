@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 )
 
-// Channel represents the stream and the subscribed event handlers waiting for ticks on the stream
+// Channel represents a named bus stream and the handlers subscribed to it.
 type Channel struct {
 	Name                      string `json:"string"`
 	eventHandlers             atomic.Pointer[[]*channelEventHandler]
@@ -109,6 +109,7 @@ func (activity *channelActivity) hasOutstandingAfterLocked(start uint64, target 
 	return false
 }
 
+// NewChannel creates an empty bus channel with the provided name.
 func NewChannel(channelName string) *Channel {
 	eventHandlers := make([]*channelEventHandler, 0)
 	c := &Channel{
@@ -125,32 +126,39 @@ func NewChannel(channelName string) *Channel {
 	return c
 }
 
+// SetPrivate marks the channel as private or public.
 func (channel *Channel) SetPrivate(private bool) {
 	channel.private = private
 }
 
+// SetGalactic marks the channel as backed by a broker destination.
 func (channel *Channel) SetGalactic(mappedDestination string) {
 	channel.galactic = true
 	channel.galacticMappedDestination = mappedDestination
 }
 
+// SetLocal marks the channel as local-only.
 func (channel *Channel) SetLocal() {
 	channel.galactic = false
 	channel.galacticMappedDestination = ""
 }
 
+// IsGalactic reports whether the channel forwards through a broker destination.
 func (channel *Channel) IsGalactic() bool {
 	return channel.galactic
 }
 
+// IsPrivate reports whether the channel is marked private.
 func (channel *Channel) IsPrivate() bool {
 	return channel.private
 }
 
+// Send dispatches a message to the channel using a background context.
 func (channel *Channel) Send(message *model.Message) {
 	channel.SendContext(context.Background(), message)
 }
 
+// SendContext dispatches a message to subscribed handlers unless ctx is already canceled.
 func (channel *Channel) SendContext(ctx context.Context, message *model.Message) {
 	channel.dispatchContext(ctx, message)
 }
@@ -185,11 +193,14 @@ func (channel *Channel) dispatchContext(ctx context.Context, message *model.Mess
 	if len(scheduledHandlers) == 0 {
 		return
 	}
+	// One dispatch goroutine owns the scheduled handler list. This keeps the hot
+	// path at one goroutine per message while preserving async delivery.
 	seq := channel.activity.begin()
 	channel.wg.Add(1)
 	go channel.sendMessageToHandlers(ctx, scheduledHandlers, message, seq)
 }
 
+// ContainsHandlers reports whether the channel currently has subscribed handlers.
 func (channel *Channel) ContainsHandlers() bool {
 	return len(channel.handlersSnapshot()) > 0
 }

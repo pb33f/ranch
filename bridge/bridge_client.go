@@ -35,7 +35,7 @@ type BridgeClient struct {
 	sendLock         sync.Mutex
 }
 
-// NewBridgeWsClient Create a new WebSocket client.
+// NewBridgeWsClient creates a WebSocket-backed bridge client.
 func NewBridgeWsClient(enableLogging bool) *BridgeClient {
 	return newBridgeWsClient(enableLogging)
 }
@@ -150,6 +150,7 @@ func (ws *BridgeClient) Subscribe(destination string) *BridgeClientSub {
 	return s
 }
 
+// Send sends a STOMP SEND frame to destination with the supplied content type and payload.
 func (ws *BridgeClient) Send(destination, contentType string, payload []byte, opts ...func(fr *frame.Frame) error) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()

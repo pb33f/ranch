@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"github.com/pb33f/ranch/bus"
-	"github.com/pb33f/ranch/model"
 	"github.com/pb33f/ranch/plank/pkg/middleware"
 	"github.com/pb33f/ranch/plank/pkg/routing"
 	"github.com/pb33f/ranch/store"
@@ -24,6 +23,7 @@ import (
 	"time"
 )
 
+// DefaultDebugProfilerPort is the fallback pprof listener port when debug profiling is enabled.
 const DefaultDebugProfilerPort = 6062
 
 // PlatformServerConfig holds all the core configuration needed for the functionality of Plank
@@ -86,36 +86,29 @@ type PlatformServer interface {
 
 // platformServer is the main struct that holds all components together including servers, various managers etc.
 type platformServer struct {
-	HttpServer                   *http.Server                      // Http server instance
-	Http2Server                  *http2.Server                     // Http server instance
-	SyscallChan                  chan os.Signal                    // syscall channel to receive SIGINT, SIGKILL events
-	eventbus                     bus.EventBus                      // event bus pointer
-	storeManager                 store.Manager                     // store manager
-	registry                     service.ServiceRegistry           // service registry
-	lifecycle                    service.ServiceLifecycleManager   // service lifecycle manager
-	serverConfig                 *PlatformServerConfig             // server config instance
-	middlewareManager            middleware.MiddlewareManager      // middleware maanger instance
-	router                       *routing.Router                   // router instance
-	endpointHandlerMap           map[string]http.HandlerFunc       // internal map to store rest endpoint -handler mappings
-	serviceChanToBridgeEndpoints map[string][]string               // internal map to store service channel - endpoint handler key mappings
-	fabricConn                   stompserver.RawConnectionListener // WebSocket listener instance
-	fabricEndpoint               fabric.Endpoint                   // fabric endpoint instance
-	pendingRoutes                []fabric.RouteSpec                // routes registered before fabric starts
-	routeHandles                 map[string]fabric.RouteHandle     // active routes keyed by service channel
-	routeMu                      sync.Mutex                        // route bookkeeping lock
-	readyCh                      chan struct{}                     // server readiness signal
-	readyOnce                    sync.Once                         // closes readyCh exactly once
-	profilerListener             net.Listener                      // debug pprof listener
-	profilerServer               *http.Server                      // debug pprof server
-	ServerAvailability           *ServerAvailability               // server availability (not much used other than for internal monitoring for now)
-	lock                         sync.Mutex                        // lock
-	messageBridgeMap             map[string]*MessageBridge
-}
-
-// MessageBridge is a conduit used for returning service responses as HTTP responses
-type MessageBridge struct {
-	ServiceListenStream bus.MessageHandler  // message handler returned by bus.ListenStream responsible for relaying back messages as HTTP responses
-	payloadChannel      chan *model.Message // internal golang channel used for passing bus responses/errors across goroutines
+	HttpServer         *http.Server                      // Http server instance
+	Http2Server        *http2.Server                     // Http server instance
+	SyscallChan        chan os.Signal                    // syscall channel to receive SIGINT, SIGKILL events
+	eventbus           bus.EventBus                      // event bus pointer
+	storeManager       store.Manager                     // store manager
+	registry           service.ServiceRegistry           // service registry
+	lifecycle          service.ServiceLifecycleManager   // service lifecycle manager
+	serverConfig       *PlatformServerConfig             // server config instance
+	middlewareManager  middleware.MiddlewareManager      // middleware maanger instance
+	router             *routing.Router                   // router instance
+	endpointHandlerMap map[string]http.HandlerFunc       // internal map to store rest endpoint -handler mappings
+	bridges            *RestBridgeRegistry               // REST bridge route and response registry
+	fabricConn         stompserver.RawConnectionListener // WebSocket listener instance
+	fabricEndpoint     fabric.Endpoint                   // fabric endpoint instance
+	pendingRoutes      []fabric.RouteSpec                // routes registered before fabric starts
+	routeHandles       map[string]fabric.RouteHandle     // active routes keyed by service channel
+	routeMu            sync.Mutex                        // route bookkeeping lock
+	readyCh            chan struct{}                     // server readiness signal
+	readyOnce          sync.Once                         // closes readyCh exactly once
+	profilerListener   net.Listener                      // debug pprof listener
+	profilerServer     *http.Server                      // debug pprof server
+	ServerAvailability *ServerAvailability               // server availability (not much used other than for internal monitoring for now)
+	lock               sync.Mutex                        // lock
 }
 
 // ServerAvailability contains boolean fields to indicate what components of the system are available or not

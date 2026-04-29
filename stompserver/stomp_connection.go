@@ -15,6 +15,7 @@ import (
 	"time"
 )
 
+// MiddlewareRegistry maps STOMP commands or "*" to middleware chains.
 type MiddlewareRegistry map[string][]MiddlewareFunc
 
 // FrameHandlerFunc is a function that processes a STOMP frame.
@@ -23,6 +24,7 @@ type FrameHandlerFunc func(conn StompConn, f *frame.Frame) error
 // MiddlewareFunc is a function that wraps a FrameHandlerFunc.
 type MiddlewareFunc func(FrameHandlerFunc) FrameHandlerFunc
 
+// Subscription represents a STOMP subscription owned by a connection.
 type Subscription struct {
 	id          string
 	destination string
@@ -71,6 +73,7 @@ func (a *AuthInfo) HasRole(role string) bool {
 	return false
 }
 
+// StompConn is a server-side STOMP client connection.
 type StompConn interface {
 	// Return unique connection Id string
 	GetId() string
@@ -116,6 +119,7 @@ type stompConn struct {
 	done             chan struct{}
 }
 
+// NewStompConn creates and starts a server-side STOMP connection.
 func NewStompConn(rawConnection RawConnection, config StompConfig, events chan *ConnEvent) StompConn {
 	conn := &stompConn{
 		rawConnection: rawConnection,
@@ -205,6 +209,8 @@ func (conn *stompConn) sendConnectionClosed(event *ConnEvent) {
 	select {
 	case conn.events <- event:
 	default:
+		// Close cleanup must not be dropped. If the server event loop is briefly
+		// behind, wait in a bounded goroutine rather than leaking forever.
 		go func() {
 			conn.sendEvent(event)
 		}()

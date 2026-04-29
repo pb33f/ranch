@@ -18,9 +18,11 @@ import (
 )
 
 const (
+	// STOMP_SESSION_NOTIFY_CHANNEL carries STOMP session lifecycle events on the event bus.
 	STOMP_SESSION_NOTIFY_CHANNEL = bus.RANCH_INTERNAL_CHANNEL_PREFIX + "stomp-session-notify"
 )
 
+// Endpoint exposes the lifecycle and routing API for a Fabric STOMP endpoint.
 type Endpoint interface {
 	Start(ctx context.Context) error
 	Stop() error
@@ -35,6 +37,7 @@ type channelMapping struct {
 	autoCreated bool
 }
 
+// StompSessionEvent describes a STOMP connection lifecycle event.
 type StompSessionEvent struct {
 	Id        string
 	EventType stompserver.StompSessionEventType
@@ -61,6 +64,7 @@ func ensureTrailingSlash(s string) string {
 	return s
 }
 
+// New creates a Fabric endpoint backed by a STOMP connection listener.
 func New(bus bus.EventBus,
 	conListener stompserver.RawConnectionListener, config EndpointConfig) (Endpoint, error) {
 
@@ -208,6 +212,8 @@ func (fe *fabricEndpoint) addSubscription(
 				return
 			}
 
+			// Before a service route exists, topic subscriptions need a fallback
+			// forwarder so clients can subscribe first and receive later responses.
 			var err error
 			messageHandler, err = fe.bus.ListenStream(channelName)
 			if messageHandler == nil || err != nil {
@@ -244,6 +250,9 @@ func (fe *fabricEndpoint) addSubscription(
 
 func (fe *fabricEndpoint) detachSubscriptionForwarderLocked(channelName string) bus.MessageHandler {
 	if chanMap, ok := fe.chanMappings[channelName]; ok {
+		// Route registration replaces fallback forwarding. Keep the subscriber
+		// mapping, but return the handler so the router can close it after the
+		// route is visible to concurrent subscribers.
 		handler := chanMap.handler
 		chanMap.handler = nil
 		chanMap.autoCreated = false
@@ -399,6 +408,7 @@ func (fe *fabricEndpoint) bridgeMessage(destination string, message []byte, conn
 	}
 
 	if isPrivateRequest {
+		// Private app requests should answer only the originating connection.
 		req.BrokerDestination = &model.BrokerDestinationConfig{
 			Destination:  fe.config.UserQueuePrefix + channelName,
 			ConnectionId: connectionId,

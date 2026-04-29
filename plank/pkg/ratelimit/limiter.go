@@ -27,6 +27,7 @@ type Limiter struct {
 	cleanupStarted sync.Once
 }
 
+// New creates a limiter from config.
 func New(config Config) *Limiter {
 	return &Limiter{
 		config:   config,
@@ -34,6 +35,7 @@ func New(config Config) *Limiter {
 	}
 }
 
+// Allow consumes a token for r and returns the decision plus event details.
 func (l *Limiter) Allow(r *http.Request) (bool, Event) {
 	key, keyType, err := l.config.KeyExtractor(r)
 	if err != nil {
@@ -104,7 +106,7 @@ func (l *Limiter) getOrCreateLimiter(key string, tier Tier) *rate.Limiter {
 	return limiter
 }
 
-// starts background goroutine to remove stale visitors. safe to call multiple times.
+// StartCleanup starts a background goroutine to remove stale visitors.
 func (l *Limiter) StartCleanup(ctx context.Context) {
 	l.cleanupStarted.Do(func() {
 		ticker := time.NewTicker(l.config.CleanupInterval)
@@ -135,6 +137,7 @@ func (l *Limiter) cleanup() {
 	}
 }
 
+// VisitorCount returns the number of tracked visitor keys.
 func (l *Limiter) VisitorCount() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()

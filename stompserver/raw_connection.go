@@ -8,10 +8,12 @@ import (
 	"time"
 )
 
+// Connection describes a raw connection lifecycle notification.
 type Connection struct {
 	Source string
 }
 
+// RawConnection is the minimal frame-oriented connection needed by the STOMP server.
 type RawConnection interface {
 	// ReadFrame Reads a single frame object
 	ReadFrame() (*frame.Frame, error)
@@ -25,6 +27,7 @@ type RawConnection interface {
 	Close() error
 }
 
+// RawConnectionListener accepts raw STOMP connections.
 type RawConnectionListener interface {
 	// Accept Blocks until a new RawConnection is established.
 	Accept() (RawConnection, error)

@@ -9,10 +9,11 @@ import (
 	"net/url"
 )
 
+// Request is the service-level payload delivered to Fabric services.
 type Request struct {
 	Id                 *uuid.UUID          `json:"id,omitempty"`
 	Destination        string              `json:"channel,omitempty"`
-	Payload            any         `json:"payload,omitempty"`
+	Payload            any                 `json:"payload,omitempty"`
 	RequestCommand     string              `json:"request,omitempty" mapstructure:"request"`
 	HttpRequest        *http.Request       `json:"-"`
 	HttpResponseWriter http.ResponseWriter `json:"-"`

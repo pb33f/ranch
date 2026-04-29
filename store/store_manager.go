@@ -61,10 +61,12 @@ type storeManager struct {
 	syncService      *storeSyncService
 }
 
+// NewManager creates a store manager using the default logger.
 func NewManager(eventBus bus.EventBus) Manager {
 	return NewManagerWithLogger(eventBus, nil)
 }
 
+// NewManagerWithLogger creates a store manager using logger, or slog.Default when logger is nil.
 func NewManagerWithLogger(eventBus bus.EventBus, logger *slog.Logger) Manager {
 	if logger == nil {
 		logger = slog.Default()

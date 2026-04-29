@@ -14,12 +14,14 @@ import (
 	"github.com/pb33f/ranch/model"
 )
 
+// MessageRouter routes bus messages to STOMP destinations.
 type MessageRouter interface {
 	RegisterRoute(spec RouteSpec) (RouteHandle, error)
 	RouteMessage(ctx context.Context, channel string, msg *model.Message) error
 	Close() error
 }
 
+// RouteSpec describes a bus channel route exposed through Fabric.
 type RouteSpec struct {
 	BusChannel    string
 	DefaultDest   string
@@ -27,6 +29,7 @@ type RouteSpec struct {
 	Direction     model.Direction
 }
 
+// RouteHandle closes a registered route.
 type RouteHandle interface {
 	Close() error
 }
@@ -66,6 +69,7 @@ func newMessageRouter(endpoint routeEndpoint, bus bus.EventBus, logger *slog.Log
 	}
 }
 
+// TopicDestination builds the default topic destination for a bus channel.
 func TopicDestination(cfg *EndpointConfig, channel string) string {
 	prefix := "/topic/"
 	if cfg != nil && cfg.TopicPrefix != "" {
@@ -121,7 +125,8 @@ func (r *messageRouter) RegisterRoute(spec RouteSpec) (RouteHandle, error) {
 		_ = handle.closeStream()
 		return nil, fmt.Errorf("route already registered for channel %q", spec.BusChannel)
 	}
-	// Publish the route before detaching the fallback forwarder so concurrent subscribers see it.
+	// Publish the route before detaching the fallback forwarder so concurrent
+	// subscribers do not install a duplicate fallback during registration.
 	r.routes[spec.BusChannel] = handle
 	r.mu.Unlock()
 

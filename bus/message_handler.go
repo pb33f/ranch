@@ -12,14 +12,16 @@ import (
 	"sync"
 )
 
-// Signature used for all functions used on bus stream APIs to Handle messages.
+// MessageHandlerFunction handles a delivered bus message.
 type MessageHandlerFunction func(*model.Message)
 
+// MessageHandlerContextFunction handles a delivered bus message with the dispatch context.
 type MessageHandlerContextFunction func(context.Context, *model.Message)
 
-// Signature used for all functions used on bus stream APIs to Handle errors.
+// MessageErrorFunction handles asynchronous bus errors.
 type MessageErrorFunction func(error)
 
+// MessageErrorContextFunction handles asynchronous bus errors with the dispatch context.
 type MessageErrorContextFunction func(context.Context, error)
 
 // MessageHandler provides access to the ID the handler is listening for from all messages
@@ -114,6 +116,8 @@ func (msgHandler *messageHandler) FireContext(ctx context.Context) error {
 		}
 		start := msgHandler.channel.activity.watermark()
 		msgHandler.channel.dispatchContext(ctx, msgHandler.requestMessage)
+		// Wait only for dispatches scheduled after start and before this FireContext
+		// reaches quiescence; concurrent publishers can keep sending independently.
 		return msgHandler.channel.activity.waitQuiescentAfter(ctx, start)
 	}
 	return fmt.Errorf("nothing to fire, request is empty")

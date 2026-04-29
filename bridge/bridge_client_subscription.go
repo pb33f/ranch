@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-// BridgeClientSub is a client subscription that encapsulates message and error channels for a subscription
+// BridgeClientSub is a client subscription that encapsulates message and error channels for a subscription.
 type BridgeClientSub struct {
 	C           chan *model.Message // MESSAGE payloads
 	E           chan *model.Message // ERROR payloads.
@@ -21,7 +21,7 @@ type BridgeClientSub struct {
 	lock        sync.RWMutex
 }
 
-// Send an UNSUBSCRIBE frame for subscription destination.
+// Unsubscribe sends an UNSUBSCRIBE frame for the subscription destination.
 func (cs *BridgeClientSub) Unsubscribe() {
 	cs.lock.Lock()
 	cs.subscribed = false

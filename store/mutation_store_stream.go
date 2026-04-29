@@ -9,6 +9,7 @@ import (
 	"sync"
 )
 
+// MutationRequest is delivered to mutation subscribers when a store mutation is requested.
 type MutationRequest struct {
 	Request        any
 	RequestType    any
@@ -16,9 +17,10 @@ type MutationRequest struct {
 	ErrorHandler   func(any)
 }
 
+// MutationRequestHandlerFunction handles a store mutation request.
 type MutationRequestHandlerFunction func(mutationReq *MutationRequest)
 
-// Interface for subscribing for mutation requests
+// MutationStoreStream subscribes to store mutation requests.
 type MutationStoreStream interface {
 	// Subscribe to the mutation requests stream.
 	Subscribe(handler MutationRequestHandlerFunction) error

@@ -45,66 +45,79 @@ func NewCacheControlDirective() *CacheControlDirective {
 	return &CacheControlDirective{}
 }
 
+// Public adds the public cache directive.
 func (c *CacheControlDirective) Public() *CacheControlDirective {
 	c.directives = append(c.directives, "public")
 	return c
 }
 
+// Private adds the private cache directive.
 func (c *CacheControlDirective) Private() *CacheControlDirective {
 	c.directives = append(c.directives, "private")
 	return c
 }
 
+// NoCache adds the no-cache directive.
 func (c *CacheControlDirective) NoCache() *CacheControlDirective {
 	c.directives = append(c.directives, "no-cache")
 	return c
 }
 
+// NoStore adds the no-store directive.
 func (c *CacheControlDirective) NoStore() *CacheControlDirective {
 	c.directives = append(c.directives, "no-store")
 	return c
 }
 
+// MaxAge adds the max-age directive using t in seconds.
 func (c *CacheControlDirective) MaxAge(t time.Duration) *CacheControlDirective {
 	c.directives = append(c.directives, fmt.Sprintf("max-age=%d", int64(t.Seconds())))
 	return c
 }
 
+// SharedMaxAge adds the s-maxage directive using t in seconds.
 func (c *CacheControlDirective) SharedMaxAge(t time.Duration) *CacheControlDirective {
 	c.directives = append(c.directives, fmt.Sprintf("s-maxage=%d", int64(t.Seconds())))
 	return c
 }
 
+// MaxStale adds the max-stale directive using t in seconds.
 func (c *CacheControlDirective) MaxStale(t time.Duration) *CacheControlDirective {
 	c.directives = append(c.directives, fmt.Sprintf("max-stale=%d", int64(t.Seconds())))
 	return c
 }
 
+// MinFresh adds the min-fresh directive using t in seconds.
 func (c *CacheControlDirective) MinFresh(t time.Duration) *CacheControlDirective {
 	c.directives = append(c.directives, fmt.Sprintf("min-fresh=%d", int64(t.Seconds())))
 	return c
 }
 
+// MustRevalidate adds the must-revalidate directive.
 func (c *CacheControlDirective) MustRevalidate() *CacheControlDirective {
 	c.directives = append(c.directives, "must-revalidate")
 	return c
 }
 
+// ProxyRevalidate adds the proxy-revalidate directive.
 func (c *CacheControlDirective) ProxyRevalidate() *CacheControlDirective {
 	c.directives = append(c.directives, "proxy-revalidate")
 	return c
 }
 
+// Immutable adds the immutable directive.
 func (c *CacheControlDirective) Immutable() *CacheControlDirective {
 	c.directives = append(c.directives, "immutable")
 	return c
 }
 
+// NoTransform adds the no-transform directive.
 func (c *CacheControlDirective) NoTransform() *CacheControlDirective {
 	c.directives = append(c.directives, "no-transform")
 	return c
 }
 
+// OnlyIfCached adds the only-if-cached directive.
 func (c *CacheControlDirective) OnlyIfCached() *CacheControlDirective {
 	c.directives = append(c.directives, "only-if-cached")
 	return c

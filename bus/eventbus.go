@@ -14,8 +14,10 @@ import (
 	"sync/atomic"
 )
 
+// RANCH_INTERNAL_CHANNEL_PREFIX prefixes channels reserved for Ranch internals.
 const RANCH_INTERNAL_CHANNEL_PREFIX = "_ranchInternal/"
 
+// Publisher contains the outbound message APIs exposed by an EventBus.
 type Publisher interface {
 	SendRequestMessage(channelName string, payload any, destinationId *uuid.UUID) error
 	SendRequestMessageContext(
@@ -29,6 +31,7 @@ type Publisher interface {
 	SendErrorMessageContext(ctx context.Context, channelName string, err error, destinationId *uuid.UUID) error
 }
 
+// Subscriber contains the inbound subscription APIs exposed by an EventBus.
 type Subscriber interface {
 	ListenStream(channelName string) (MessageHandler, error)
 	ListenStreamForDestination(channelName string, destinationId *uuid.UUID) (MessageHandler, error)
@@ -45,20 +48,24 @@ type Subscriber interface {
 	RequestStreamForDestination(channelName string, payload any, destId *uuid.UUID) (MessageHandler, error)
 }
 
+// ChannelControl exposes direct access to event bus channels.
 type ChannelControl interface {
 	GetChannelManager() ChannelManager
 }
 
+// BrokerControl exposes broker connection support.
 type BrokerControl interface {
 	ConnectBroker(config *bridge.BrokerConnectorConfig) (conn bridge.Connection, err error)
 }
 
+// MonitorControl exposes monitor event subscription and publishing.
 type MonitorControl interface {
 	AddMonitorEventListener(listener MonitorEventHandler, eventTypes ...MonitorEventType) MonitorEventListenerId
 	RemoveMonitorEventListener(listenerId MonitorEventListenerId)
 	SendMonitorEvent(evtType MonitorEventType, entityName string, data any)
 }
 
+// EventBus combines publishing, subscription, channel, broker, and monitor APIs.
 type EventBus interface {
 	Publisher
 	Subscriber
@@ -68,10 +75,12 @@ type EventBus interface {
 	GetId() *uuid.UUID
 }
 
+// NewEventBus creates an EventBus using the default logger.
 func NewEventBus() EventBus {
 	return NewEventBusWithLogger(nil)
 }
 
+// NewEventBusWithLogger creates an EventBus using logger, or slog.Default when logger is nil.
 func NewEventBusWithLogger(logger *slog.Logger) EventBus {
 	bf := new(transportEventBus)
 	bf.init(logger)
@@ -88,6 +97,7 @@ type transportEventBus struct {
 	logger              *slog.Logger
 }
 
+// MonitorEventListenerId identifies a registered monitor event listener.
 type MonitorEventListenerId int
 
 type transportMonitor struct {

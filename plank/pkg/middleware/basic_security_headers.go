@@ -9,6 +9,7 @@ import (
 	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
+// BasicSecurityHeaderMiddleware adds the default Plank security headers.
 func BasicSecurityHeaderMiddleware() routing.MiddlewareFunc {
 	return func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -15,7 +15,7 @@ import (
 	"sync"
 )
 
-// Describes a single store item change
+// StoreChange describes a single store item change.
 type StoreChange struct {
 	Id             string // the id of the updated item
 	Value          any    // the updated value of the item
@@ -331,6 +331,8 @@ func (store *busStore) PutContext(ctx context.Context, id string, value any, sta
 		store.itemsMu.Lock()
 		change := store.putInternalContext(id, value, state)
 		store.itemsMu.Unlock()
+		// The write is committed before subscribers are notified, so cancellation
+		// after PutContext returns must not suppress the change event.
 		store.onStoreChange(context.WithoutCancel(ctx), change)
 	}
 }
@@ -404,6 +406,8 @@ func (store *busStore) RemoveContext(ctx context.Context, id string, state any) 
 		change, removed := store.removeInternalContext(id, state)
 		store.itemsMu.Unlock()
 		if removed {
+			// The removal is committed before subscribers are notified, so
+			// cancellation after RemoveContext returns must not suppress the event.
 			store.onStoreChange(context.WithoutCancel(ctx), change)
 		}
 		return removed
@@ -535,6 +539,8 @@ func (store *busStore) onStoreChange(ctx context.Context, change *StoreChange) {
 	streams := append([]*storeStream(nil), store.storeStreams...)
 	store.storeStreamsMu.RUnlock()
 
+	// Notify outside the stream registry lock. Handlers may unsubscribe or touch
+	// the store again, and lock re-entry here would make that path fragile.
 	for _, storeStream := range streams {
 		storeStream.onStoreChange(ctx, change)
 	}

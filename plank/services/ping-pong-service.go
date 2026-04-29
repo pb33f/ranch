@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	// PingPongServiceChan is the example channel used by PingPongService.
 	PingPongServiceChan = "ping-pong-service"
 )
 
@@ -25,6 +26,7 @@ const (
 // which will match the request's Request to the list of available service request types and return the response.
 type PingPongService struct{}
 
+// NewPingPongService creates the example ping-pong service.
 func NewPingPongService() *PingPongService {
 	return &PingPongService{}
 }

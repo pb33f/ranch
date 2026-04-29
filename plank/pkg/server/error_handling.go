@@ -8,6 +8,7 @@ import (
 	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
+// BrowserNavigationFallback returns a predicate for SPA browser navigation requests.
 func BrowserNavigationFallback() func(*http.Request) bool {
 	return func(r *http.Request) bool {
 		if r.Method != http.MethodGet {
@@ -137,6 +138,7 @@ func pathMatchesPrefix(requestPath, prefix string) bool {
 		return false
 	}
 
+	// Match full path segments only: /api matches /api/users, but not /apix.
 	next := requestPath[len(prefix)]
 	return next == '/'
 }

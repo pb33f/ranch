@@ -43,6 +43,7 @@ type tcpConnectionListener struct {
 	openChannel  chan *Connection
 }
 
+// NewTcpConnectionListener creates a TCP listener for raw STOMP connections.
 func NewTcpConnectionListener(addr string) (RawConnectionListener, error) {
 	tcpListener, err := net.Listen("tcp", addr)
 	if err != nil {

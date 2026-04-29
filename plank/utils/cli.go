@@ -3,6 +3,7 @@
 
 package utils
 
+// PlatformServerFlagConstants describes Plank CLI flags by config field name.
 var PlatformServerFlagConstants = map[string]map[string]string{
 	"Hostname": {
 		"FlagName":    "hostname",

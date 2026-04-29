@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// WebSocketConfig configures broker connections that use STOMP over WebSocket.
 type WebSocketConfig struct {
 	WSPath    string      // if UseWS is true, set this to your websocket path (e.g. '/fabric')
 	UseTLS    bool        // use TLS encryption with WebSocket connection
