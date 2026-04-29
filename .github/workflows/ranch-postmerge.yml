@@ -32,13 +32,3 @@ jobs:
         with:
           version: v2.11.4
           args: --timeout=5m ./...
-
-      - name: Upload coverage
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./cover.out
-          flags: unittests
-          fail_ci_if_error: true
-          verbose: true
