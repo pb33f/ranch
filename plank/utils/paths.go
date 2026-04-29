@@ -27,7 +27,6 @@ func IsAbsolutePath(p string) bool {
 // 4. folder:/my-folder => /my-folder
 // 5. nested/project => /project
 // 6. nested/project:my-project => /my-project
-
 func DeriveStaticURIFromPath(input string) (string, string) {
 	input = strings.TrimSpace(input)
 	if len(input) == 0 {
@@ -53,6 +52,7 @@ func DeriveStaticURIFromPath(input string) (string, string) {
 	return p, uri
 }
 
+// JoinBasePathIfRelativeRegularFilePath joins base to in unless in is absolute or a special stream name.
 func JoinBasePathIfRelativeRegularFilePath(base string, in string) (out string) {
 	out = in
 	if in == "stdout" || in == "stderr" || in == "null" {

@@ -16,6 +16,7 @@ import (
 	"sync"
 )
 
+// Connection sends, receives, and subscribes to messages through a broker.
 type Connection interface {
 	GetId() *uuid.UUID
 	Subscribe(destination string) (Subscription, error)

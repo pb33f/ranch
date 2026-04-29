@@ -13,6 +13,7 @@ import (
 	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
+// MiddlewareManager manages route-specific and global HTTP middleware.
 type MiddlewareManager interface {
 	SetGlobalMiddleware(middleware []routing.MiddlewareFunc) error
 	SetNewMiddleware(route *routing.Route, middleware []routing.MiddlewareFunc) error
@@ -22,6 +23,7 @@ type MiddlewareManager interface {
 	GetStaticRoute(prefix string) (*routing.Route, error)
 }
 
+// Middleware names a routing middleware interceptor.
 type Middleware interface {
 	// Intercept(h http.Handler) http.Handler
 	Interceptor() routing.MiddlewareFunc

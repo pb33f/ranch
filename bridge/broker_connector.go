@@ -23,7 +23,7 @@ type brokerConnector struct {
 	connected bool
 }
 
-// Create a new broker connector
+// NewBrokerConnector creates a broker connector for TCP or WebSocket STOMP brokers.
 func NewBrokerConnector() BrokerConnector {
 	return &brokerConnector{connected: false}
 }

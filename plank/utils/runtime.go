@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// GetGoRoutineID returns the current goroutine ID parsed from the runtime stack header.
 func GetGoRoutineID() string {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
@@ -15,10 +16,12 @@ func GetGoRoutineID() string {
 	return idStr
 }
 
+// GetCurrentStackFrame returns the stack frame for its caller.
 func GetCurrentStackFrame() runtime.Frame {
 	return getFrame(1)
 }
 
+// GetCallerStackFrame returns the stack frame for its caller's caller.
 func GetCallerStackFrame() runtime.Frame {
 	return getFrame(2)
 }

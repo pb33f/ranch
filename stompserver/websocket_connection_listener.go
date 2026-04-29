@@ -26,11 +26,13 @@ type IPBlockingChecker interface {
 	ExtractRealIP(remoteAddr string, headers map[string][]string) string
 }
 
+// WebSocketStompConnection adapts a WebSocket to the RawConnection interface.
 type WebSocketStompConnection struct {
 	WSCon      *websocket.Conn
 	writeMutex sync.Mutex
 }
 
+// ReadFrame reads a single STOMP frame from the WebSocket.
 func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
 	_, r, err := c.WSCon.NextReader()
 	if err != nil {
@@ -41,6 +43,7 @@ func (c *WebSocketStompConnection) ReadFrame() (*frame.Frame, error) {
 	return f, e
 }
 
+// WriteFrame writes a single STOMP frame to the WebSocket.
 func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
 	c.writeMutex.Lock()
 	defer c.writeMutex.Unlock()
@@ -58,14 +61,17 @@ func (c *WebSocketStompConnection) WriteFrame(f *frame.Frame) error {
 	return err
 }
 
+// SetReadDeadline sets the read deadline on the underlying WebSocket.
 func (c *WebSocketStompConnection) SetReadDeadline(t time.Time) {
 	_ = c.WSCon.SetReadDeadline(t)
 }
 
+// GetRemoteAddr returns the remote network address.
 func (c *WebSocketStompConnection) GetRemoteAddr() string {
 	return c.WSCon.RemoteAddr().String()
 }
 
+// Close closes the underlying WebSocket.
 func (c *WebSocketStompConnection) Close() error {
 	return c.WSCon.Close()
 }
@@ -83,11 +89,13 @@ type webSocketConnectionListener struct {
 	blockedIPLogged       sync.Map // suppresses repeated log lines for the same blocked IP
 }
 
+// RawConnResult carries an accepted raw connection or the accept error.
 type RawConnResult struct {
 	Conn RawConnection
 	Err  error
 }
 
+// HTTPHandlerRegistrar is the subset of HTTP mux APIs needed to register a WebSocket endpoint.
 type HTTPHandlerRegistrar interface {
 	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
 }
@@ -100,6 +108,7 @@ type websocketHandlerOptions struct {
 	asyncAccept      bool
 }
 
+// NewWebSocketConnectionFromExistingHttpServer registers a WebSocket STOMP endpoint on an existing HTTP server.
 func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handler HTTPHandlerRegistrar,
 	endpoint string, allowedOrigins []string, logger *slog.Logger, debug bool, customSocketFunc http.HandlerFunc) (RawConnectionListener, error) {
 	l := &webSocketConnectionListener{
@@ -121,6 +130,7 @@ func NewWebSocketConnectionFromExistingHttpServer(httpServer *http.Server, handl
 	return l, nil
 }
 
+// NewWebSocketConnectionListener creates an HTTP server that accepts WebSocket STOMP connections.
 func NewWebSocketConnectionListener(addr string, endpoint string, allowedOrigins []string, logger *slog.Logger, debug bool) (RawConnectionListener, error) {
 	if logger == nil {
 		logger = slog.Default()

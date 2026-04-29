@@ -14,15 +14,20 @@ import (
 	"sync"
 )
 
+// TransactionType controls whether a transaction waits synchronously or runs asynchronously.
 type TransactionType int
 
 const (
+	// AsyncTransaction sends requests asynchronously and reports completion through callbacks.
 	AsyncTransaction TransactionType = iota
+	// SyncTransaction sends each request after the previous request has completed.
 	SyncTransaction
 )
 
+// ReadyFunction handles the responses collected by a completed transaction.
 type ReadyFunction func(responses []*model.Message)
 
+// Transaction batches bus requests and store readiness waits into one commit operation.
 type Transaction interface {
 	// Sends a request to a channel as a part of this transaction.
 	SendRequest(channel string, payload any) error
@@ -70,6 +75,7 @@ type busTransaction struct {
 	completedRequests  int
 }
 
+// New creates a transaction bound to an event bus and store manager.
 func New(eventBus bus.EventBus, storeManager store.Manager, transactionType TransactionType) Transaction {
 	transaction := new(busTransaction)
 

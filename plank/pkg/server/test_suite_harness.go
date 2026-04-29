@@ -135,6 +135,7 @@ func RunWhenServerReady(t *testing.T, eventBus bus.EventBus, fn func(*testing.T)
 	})
 }
 
+// RunWhenPlatformServerReady runs fn after ps reports readiness or fails the test on timeout.
 func RunWhenPlatformServerReady(t *testing.T, ps PlatformServer, fn func(*testing.T)) {
 	select {
 	case <-ps.Ready():

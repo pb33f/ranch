@@ -5,8 +5,10 @@ import (
 	"net/http"
 )
 
+// RequestBuilder converts an HTTP request into a Fabric service request.
 type RequestBuilder func(w http.ResponseWriter, r *http.Request) model.Request
 
+// ServiceLifecycleManager exposes lifecycle-aware service lookup and REST bridge overrides.
 type ServiceLifecycleManager interface {
 	GetOnReadyCapableService(serviceChannelName string) OnServiceReadyEnabled
 	GetOnServerShutdownService(serviceChannelName string) OnServerShutdownEnabled
@@ -14,30 +16,36 @@ type ServiceLifecycleManager interface {
 	OverrideRESTBridgeConfig(serviceChannelName string, config []*RESTBridgeConfig) error
 }
 
+// ServiceLifecycleHookEnabled is implemented by services with ready, shutdown, and REST bridge hooks.
 type ServiceLifecycleHookEnabled interface {
 	OnServiceReady() chan bool                // service initialization logic should be implemented here
 	OnServerShutdown()                        // teardown logic goes here and will be automatically invoked on graceful server shutdown
 	GetRESTBridgeConfig() []*RESTBridgeConfig // service-to-REST endpoint mappings go here
 }
 
+// RESTBridgeEnabled is implemented by services that expose REST bridge configuration.
 type RESTBridgeEnabled interface {
 	GetRESTBridgeConfig() []*RESTBridgeConfig // service-to-REST endpoint mappings go here
 }
 
+// OnServiceReadyEnabled is implemented by services that signal initialization completion.
 type OnServiceReadyEnabled interface {
 	OnServiceReady() chan bool // service initialization logic should be implemented here
 }
 
+// OnServerShutdownEnabled is implemented by services that need graceful shutdown callbacks.
 type OnServerShutdownEnabled interface {
 	OnServerShutdown() // teardown logic goes here and will be automatically invoked on graceful server shutdown
 }
 
+// SetupRESTBridgeRequest asks Plank to create or override REST bridge routes for a service.
 type SetupRESTBridgeRequest struct {
 	ServiceChannel string
 	Override       bool
 	Config         []*RESTBridgeConfig
 }
 
+// RESTBridgeConfig maps one HTTP endpoint to a Fabric service channel.
 type RESTBridgeConfig struct {
 	ServiceChannel       string         // transport service channel
 	Uri                  string         // URI to map the transport service to
@@ -106,6 +114,7 @@ func (lm *serviceLifecycleManager) OverrideRESTBridgeConfig(serviceChannelName s
 	return nil
 }
 
+// NewServiceLifecycleManager creates a lifecycle manager backed by a service registry.
 func NewServiceLifecycleManager(reg ServiceRegistry) ServiceLifecycleManager {
 	return &serviceLifecycleManager{serviceRegistryRef: reg}
 }

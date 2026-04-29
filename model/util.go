@@ -8,6 +8,7 @@ import (
 	"reflect"
 )
 
+// ConvertValueToType converts value to targetType by round-tripping through JSON.
 func ConvertValueToType(value any, targetType reflect.Type) (any, error) {
 	if targetType == nil {
 		return value, nil

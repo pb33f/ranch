@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// Event captures the request and limiter state for a rate-limit decision.
 type Event struct {
 	Key       string
 	KeyType   string // "session", "apikey", "ip"
@@ -27,6 +28,7 @@ type Event struct {
 	UserAgent  string
 }
 
+// NewEvent builds an Event from the request and limiter state.
 func NewEvent(r *http.Request, key, keyType string, tier Tier, allowed bool, remaining, limit int, resetAt time.Time) Event {
 	return Event{
 		Key:        key,
@@ -52,8 +54,14 @@ type EventHandler interface {
 	OnBlocked(event Event)     // called for escalating blocks (future feature)
 }
 
+// NoopEventHandler ignores all rate-limit events.
 type NoopEventHandler struct{}
 
-func (n *NoopEventHandler) OnLimited(event Event)     {}
+// OnLimited ignores a limited request event.
+func (n *NoopEventHandler) OnLimited(event Event) {}
+
+// OnApproaching ignores an approaching-limit event.
 func (n *NoopEventHandler) OnApproaching(event Event) {}
-func (n *NoopEventHandler) OnBlocked(event Event)     {}
+
+// OnBlocked ignores a blocked request event.
+func (n *NoopEventHandler) OnBlocked(event Event) {}

@@ -29,6 +29,7 @@ type ChannelManager interface {
 	MarkChannelAsLocal(channelName string) (err error)
 }
 
+// NewBusChannelManager creates the channel manager used by an EventBus.
 func NewBusChannelManager(bus EventBus) ChannelManager {
 	manager := new(busChannelManager)
 	channels := make(map[string]*Channel)

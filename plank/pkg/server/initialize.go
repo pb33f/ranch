@@ -35,7 +35,6 @@ func (ps *platformServer) initialize() {
 
 	// initialize HTTP endpoint handlers map
 	ps.endpointHandlerMap = map[string]http.HandlerFunc{}
-	ps.serviceChanToBridgeEndpoints = make(map[string][]string, 0)
 
 	// if debug flag is provided enable extra logging. also, enable profiling.
 	if ps.serverConfig.Debug {
@@ -45,6 +44,13 @@ func (ps *platformServer) initialize() {
 	// set a new route handler
 	ps.router = routing.NewRouter()
 	ps.configureRouterErrorHandlers(ps.router)
+	ps.bridges = NewRestBridgeRegistry(
+		ps.router,
+		&ps.endpointHandlerMap,
+		ps.eventbus,
+		ps.serverConfig.Logger,
+		ps.serverConfig.RestBridgeTimeout,
+		ps.buildEndpointHandler)
 
 	// register static paths
 	for _, dir := range ps.serverConfig.StaticDir {

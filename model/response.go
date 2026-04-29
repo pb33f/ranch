@@ -9,25 +9,26 @@ import (
 
 // Response represents a payload sent by a Fabric application.
 type Response struct {
-	Id             *uuid.UUID  `json:"id,omitempty"`
-	Destination    string      `json:"channel,omitempty"`
-	Payload        any `json:"payload,omitempty"`
-	HttpStatusCode int         `json:"httpStatusCode,omitempty"`
-	Error          bool        `json:"error,omitempty"`
-	ErrorCode      int         `json:"errorCode,omitempty"`
-	ErrorMessage   string      `json:"errorMessage,omitempty"`
-	ErrorObject    any `json:"errorObject,omitempty"`
+	Id             *uuid.UUID `json:"id,omitempty"`
+	Destination    string     `json:"channel,omitempty"`
+	Payload        any        `json:"payload,omitempty"`
+	HttpStatusCode int        `json:"httpStatusCode,omitempty"`
+	Error          bool       `json:"error,omitempty"`
+	ErrorCode      int        `json:"errorCode,omitempty"`
+	ErrorMessage   string     `json:"errorMessage,omitempty"`
+	ErrorObject    any        `json:"errorObject,omitempty"`
 	// If populated the response will be sent to a single client
 	// on the specified destination topic.
 	BrokerDestination *BrokerDestinationConfig `json:"-"`
-	Headers           map[string]any   `json:"-"` // passthrough any http headers
+	Headers           map[string]any           `json:"-"` // passthrough any http headers
 	Marshal           bool                     `json:"-"` // if true, the payload be marshalled into JSON.
 }
 
-// Used to specify the target user queue of the Response
+// BrokerDestinationConfig specifies the target user queue of a response.
 type BrokerDestinationConfig struct {
 	Destination  string
 	ConnectionId string
 }
 
+// ResponseHandlerFunction handles a service response.
 type ResponseHandlerFunction func(*Response)

@@ -6,8 +6,10 @@ import (
 	"sync"
 )
 
+// MiddlewareFunc wraps an HTTP handler with cross-cutting behavior.
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// Router stores named routes and dispatches requests through a net/http ServeMux.
 type Router struct {
 	mu                      sync.RWMutex
 	routes                  []*Route
@@ -20,6 +22,7 @@ type Router struct {
 	dirty                   bool
 }
 
+// Route is a registered path or prefix route.
 type Route struct {
 	router  *Router
 	name    string
@@ -29,6 +32,7 @@ type Route struct {
 	handler http.Handler
 }
 
+// NewRouter creates an empty Router.
 func NewRouter() *Router {
 	return &Router{
 		named: make(map[string]*Route),
@@ -36,6 +40,7 @@ func NewRouter() *Router {
 	}
 }
 
+// Use appends global middleware applied to all registered route handlers.
 func (r *Router) Use(middleware ...MiddlewareFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -43,28 +48,34 @@ func (r *Router) Use(middleware ...MiddlewareFunc) {
 	r.markDirtyLocked()
 }
 
+// Handle registers handler for an exact path pattern.
 func (r *Router) Handle(pattern string, handler http.Handler) {
 	r.Path(pattern).Handler(handler)
 }
 
+// HandleFunc registers handler for an exact path pattern.
 func (r *Router) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
 	r.Handle(pattern, http.HandlerFunc(handler))
 }
 
+// Path registers an exact route path and returns it for further configuration.
 func (r *Router) Path(path string) *Route {
 	return r.addRoute(path, false)
 }
 
+// PathPrefix registers a prefix route and returns it for further configuration.
 func (r *Router) PathPrefix(prefix string) *Route {
 	return r.addRoute(prefix, true)
 }
 
+// Get returns a named route, or nil when no route is registered under name.
 func (r *Router) Get(name string) *Route {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.named[name]
 }
 
+// CloneExcluding returns a router clone without the named routes in names.
 func (r *Router) CloneExcluding(names map[string]bool) *Router {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -91,11 +102,15 @@ func (r *Router) CloneExcluding(names map[string]bool) *Router {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	snapshot := r.snapshot()
 
+	// Let ServeMux do the real dispatch so path values and canonical redirects
+	// stay aligned with the standard library.
 	if _, pattern := snapshot.dispatchMux.Handler(req); pattern != "" {
 		snapshot.dispatchMux.ServeHTTP(w, req)
 		return
 	}
 
+	// ServeMux does not expose method-mismatch separately from no-match. A
+	// second path-only mux gives us that distinction without manual matching.
 	if _, pattern := snapshot.pathMux.Handler(req); pattern != "" {
 		serveMethodNotAllowed(snapshot.methodNotAllowedHandler, w, req)
 		return
@@ -118,6 +133,7 @@ func (r *Router) addRoute(path string, prefix bool) *Route {
 	return route
 }
 
+// Name assigns a lookup name to the route.
 func (rt *Route) Name(name string) *Route {
 	rt.router.mu.Lock()
 	defer rt.router.mu.Unlock()
@@ -132,6 +148,7 @@ func (rt *Route) Name(name string) *Route {
 	return rt
 }
 
+// Handler assigns the HTTP handler for the route.
 func (rt *Route) Handler(handler http.Handler) *Route {
 	rt.router.mu.Lock()
 	defer rt.router.mu.Unlock()
@@ -140,10 +157,12 @@ func (rt *Route) Handler(handler http.Handler) *Route {
 	return rt
 }
 
+// HandlerFunc assigns the HTTP handler function for the route.
 func (rt *Route) HandlerFunc(handler func(http.ResponseWriter, *http.Request)) *Route {
 	return rt.Handler(http.HandlerFunc(handler))
 }
 
+// Methods restricts the route to the supplied HTTP methods.
 func (rt *Route) Methods(methods ...string) *Route {
 	rt.router.mu.Lock()
 	defer rt.router.mu.Unlock()
@@ -152,24 +171,28 @@ func (rt *Route) Methods(methods ...string) *Route {
 	return rt
 }
 
+// GetName returns the route name.
 func (rt *Route) GetName() string {
 	rt.router.mu.RLock()
 	defer rt.router.mu.RUnlock()
 	return rt.name
 }
 
+// GetPathTemplate returns the route path template.
 func (rt *Route) GetPathTemplate() (string, error) {
 	rt.router.mu.RLock()
 	defer rt.router.mu.RUnlock()
 	return rt.path, nil
 }
 
+// GetMethods returns the configured HTTP methods.
 func (rt *Route) GetMethods() ([]string, error) {
 	rt.router.mu.RLock()
 	defer rt.router.mu.RUnlock()
 	return append([]string(nil), rt.methods...), nil
 }
 
+// GetHandler returns the route handler.
 func (rt *Route) GetHandler() http.Handler {
 	rt.router.mu.RLock()
 	defer rt.router.mu.RUnlock()
@@ -253,6 +276,8 @@ func routeHandler(router *Router, methods []string, handler http.Handler) http.H
 		return handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Standard ServeMux treats GET patterns as matching HEAD. Ranch bridges
+		// have explicit AllowHead configuration, so keep method checks exact.
 		if !methodAllowed(allowedMethods, req.Method) {
 			serveMethodNotAllowed(router.methodNotAllowedHandler(), w, req)
 			return
@@ -293,6 +318,8 @@ func (rt *Route) pathPatterns() []string {
 	if strings.HasSuffix(path, "/") {
 		return []string{path}
 	}
+	// ServeMux subtree patterns require a trailing slash. Register the bare
+	// prefix as well so PathPrefix("/api") matches both /api and /api/... .
 	return []string{path, path + "/"}
 }
 

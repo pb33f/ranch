@@ -10,6 +10,7 @@ import (
 	"github.com/pb33f/ranch/model"
 )
 
+// Subscription exposes a broker subscription and its incoming message channel.
 type Subscription interface {
 	GetId() *uuid.UUID
 	GetMsgChannel() chan *model.Message

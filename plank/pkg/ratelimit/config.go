@@ -10,14 +10,19 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Tier names a rate-limit tier.
 type Tier string
 
 const (
+	// TierUnauth is the default tier for unauthenticated requests.
 	TierUnauth Tier = "unauth"
-	TierAuth   Tier = "auth"
-	TierPaid   Tier = "paid"
+	// TierAuth is the default tier for authenticated requests.
+	TierAuth Tier = "auth"
+	// TierPaid is the default tier for paid accounts.
+	TierPaid Tier = "paid"
 )
 
+// TierConfig defines the token bucket settings for a tier.
 type TierConfig struct {
 	Rate  rate.Limit // tokens per second
 	Burst int        // max burst size
@@ -29,6 +34,7 @@ type KeyExtractor func(r *http.Request) (key string, keyType string, err error)
 // TierResolver maps a key to its tier based on key type
 type TierResolver func(key string, keyType string) Tier
 
+// Config controls tier resolution, limits, cleanup, and event handling.
 type Config struct {
 	Tiers            map[Tier]TierConfig
 	KeyExtractor     KeyExtractor
@@ -57,4 +63,3 @@ func DefaultConfig() Config {
 		WarningThreshold: 0.2,
 	}
 }
-

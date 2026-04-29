@@ -15,12 +15,15 @@ import (
 	"strings"
 )
 
+// RestServiceChannel is the internal channel used by the REST bridge service.
 const RestServiceChannel = "fabric-rest"
 
+// NewRestService creates the internal service that performs outbound HTTP requests.
 func NewRestService() FabricService {
 	return &restService{}
 }
 
+// RestServiceRequest describes an outbound HTTP request made by the internal REST service.
 type RestServiceRequest struct {
 	// The destination URL of the request.
 	Uri string `json:"uri"`

@@ -13,10 +13,13 @@ import (
 	"github.com/go-stomp/stomp/v3/frame"
 )
 
+// SubscribeHandlerFunction handles STOMP SUBSCRIBE frames.
 type SubscribeHandlerFunction func(conId string, subId string, destination string, frame *frame.Frame)
 
+// UnsubscribeHandlerFunction handles STOMP UNSUBSCRIBE frames.
 type UnsubscribeHandlerFunction func(conId string, subId string, destination string)
 
+// ApplicationRequestHandlerFunction handles SEND frames targeting application destinations.
 type ApplicationRequestHandlerFunction func(destination string, message []byte, connectionId string)
 
 // ipBlockingCheckerSetter is an optional interface for listeners that support IP blocking
@@ -24,6 +27,7 @@ type ipBlockingCheckerSetter interface {
 	SetIPBlockingChecker(checker IPBlockingChecker)
 }
 
+// StompServer accepts STOMP clients and routes frames to registered callbacks.
 type StompServer interface {
 	// starts the server
 	Start()
@@ -50,17 +54,25 @@ type StompServer interface {
 	SetConnectionEventCallback(connEventType StompSessionEventType, cb func(connEvent *ConnEvent))
 }
 
+// StompSessionEventType identifies a STOMP connection or subscription event.
 type StompSessionEventType int
 
 const (
+	// ConnectionStarting is emitted before a new connection starts processing.
 	ConnectionStarting StompSessionEventType = iota
+	// ConnectionEstablished is emitted after a connection is established.
 	ConnectionEstablished
+	// ConnectionClosed is emitted after a connection closes.
 	ConnectionClosed
+	// SubscribeToTopic is emitted after a client subscribes to a destination.
 	SubscribeToTopic
+	// UnsubscribeFromTopic is emitted after a client unsubscribes from a destination.
 	UnsubscribeFromTopic
+	// IncomingMessage is emitted when a client sends an application message.
 	IncomingMessage
 )
 
+// ConnEvent carries STOMP connection event details.
 type ConnEvent struct {
 	ConnId      string
 	eventType   StompSessionEventType
@@ -119,6 +131,7 @@ type stompServer struct {
 	readyOnce                   sync.Once
 }
 
+// NewStompServer creates a STOMP server around a raw connection listener.
 func NewStompServer(listener RawConnectionListener, config StompConfig) StompServer {
 	server := &stompServer{
 		config:                      config,

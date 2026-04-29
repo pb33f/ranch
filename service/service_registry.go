@@ -20,10 +20,12 @@ var internalServices = map[string]bool{
 }
 
 const (
+	// LifecycleManagerChannelName is the internal channel for lifecycle requests.
 	LifecycleManagerChannelName = bus.RANCH_INTERNAL_CHANNEL_PREFIX + "service-lifecycle-manager"
 
-	// store constants
-	ServiceReadyStore      = "service-ready-notification-store"
+	// ServiceReadyStore is the store used for service readiness notifications.
+	ServiceReadyStore = "service-ready-notification-store"
+	// ServiceInitStateChange is the store state used for service readiness changes.
 	ServiceInitStateChange = "service-init-state-change"
 )
 
@@ -57,10 +59,12 @@ type serviceRegistry struct {
 	logger           *slog.Logger
 }
 
+// NewServiceRegistry creates a service registry using the default logger.
 func NewServiceRegistry(eventBus bus.EventBus, storeManager store.Manager) ServiceRegistry {
 	return NewServiceRegistryWithLogger(eventBus, storeManager, nil)
 }
 
+// NewServiceRegistryWithLogger creates a service registry using logger, or slog.Default when logger is nil.
 func NewServiceRegistryWithLogger(eventBus bus.EventBus, storeManager store.Manager, logger *slog.Logger) ServiceRegistry {
 	if logger == nil {
 		logger = slog.Default()

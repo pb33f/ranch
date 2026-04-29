@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// error response structure returned when rate limit is exceeded
+// ErrorResponse is returned when a request exceeds its rate limit.
 type ErrorResponse struct {
 	Error      string `json:"error"`
 	Message    string `json:"message"`
@@ -20,8 +20,8 @@ type ErrorResponse struct {
 	RetryAfter int    `json:"retry_after"`
 }
 
-// wraps an http.Handler to enforce rate limits.
-// sets standard rate limit headers on all responses and returns 429 with json body when limit is exceeded.
+// Middleware wraps an http.Handler to enforce rate limits.
+// It sets standard rate-limit headers on all responses and returns 429 with a JSON body when exceeded.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed, event := l.Allow(r)

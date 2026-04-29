@@ -15,6 +15,7 @@ type FabricService interface {
 	HandleServiceRequest(request *model.Request, core FabricServiceCore)
 }
 
+// ContextFabricService handles Fabric requests with the dispatch context.
 type ContextFabricService interface {
 	HandleServiceRequestContext(ctx context.Context, request *model.Request, core FabricServiceCore)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// StompConfig exposes STOMP server configuration.
 type StompConfig interface {
 	HeartBeat() int64
 	AppDestinationPrefix() []string
@@ -25,6 +26,7 @@ type stompConfig struct {
 	middlewareRegistry MiddlewareRegistry
 }
 
+// NewStompConfig creates STOMP server configuration with normalized application prefixes.
 func NewStompConfig(heartBeatMs int64, appDestinationPrefix []string) StompConfig {
 	prefixes := make([]string, len(appDestinationPrefix))
 	for i := 0; i < len(appDestinationPrefix); i++ {
