@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
-	"github.com/pb33f/ranch/transport/fabric"
+	"github.com/pb33f/ranch/monitor"
 	"log/slog"
 	"strings"
 	"sync"
@@ -74,13 +74,13 @@ func (syncService *storeSyncService) init() {
 			}
 
 			switch monitorEvt.EventType {
-			case fabric.FabricEndpointSubscribeEvt:
+			case monitor.FabricEndpointSubscribeEvt:
 				syncService.openNewClientSyncChannel(monitorEvt.EntityName)
 			case bus.ChannelDestroyedEvt:
 				syncService.closeClientSyncChannel(monitorEvt.EntityName)
 			}
 		},
-		fabric.FabricEndpointSubscribeEvt, bus.ChannelDestroyedEvt)
+		monitor.FabricEndpointSubscribeEvt, bus.ChannelDestroyedEvt)
 }
 
 func (syncService *storeSyncService) openNewClientSyncChannel(channelName string) {

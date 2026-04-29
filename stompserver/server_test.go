@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 type MockRawConnectionListener struct {
@@ -404,6 +405,29 @@ func TestStompServer_SetConnectionEventCallback_Disconnect(t *testing.T) {
 	wg.Wait()
 }
 
+func TestStompServer_CallbackCanRegisterCallback(t *testing.T) {
+	server, _ := newTestStompServer(NewStompConfig(0, []string{"/pub/"}))
+	done := make(chan struct{})
+	server.OnSubscribeEvent(func(conId string, subId string, destination string, f *frame.Frame) {
+		server.OnSubscribeEvent(func(conId string, subId string, destination string, f *frame.Frame) {})
+		close(done)
+	})
+
+	go server.handleConnectionEvent(&ConnEvent{
+		eventType:   SubscribeToTopic,
+		conn:        &stompConn{id: "con1"},
+		destination: "/topic/test",
+		sub:         &Subscription{id: "sub1", destination: "/topic/test"},
+		frame:       frame.New(frame.SUBSCRIBE),
+	})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("STOMP callback deadlocked while registering another callback")
+	}
+}
+
 func TestStompServer_SendMessageToClient(t *testing.T) {
 	server, listener := newTestStompServer(NewStompConfig(0, []string{"/pub/"}))
 	go server.Start()
@@ -507,8 +531,44 @@ func TestStompServer_Stop(t *testing.T) {
 	assert.Equal(t, listener.connected, false)
 }
 
+func TestStompServer_APISendsReturnAfterStop(t *testing.T) {
+	server, _ := newTestStompServer(NewStompConfig(0, []string{"/pub"}))
+	stopped := make(chan struct{})
+
+	go func() {
+		server.Start()
+		close(stopped)
+	}()
+	<-server.Ready()
+
+	server.Stop()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		server.SendMessage("/topic/test", []byte("test-message"))
+		server.SendMessageToClient("missing-client", "/topic/test", []byte("test-message"))
+		server.CloseConnectionsByIP("127.0.0.1", "blocked")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("API sends blocked after server stop")
+	}
+}
+
 func TestStompServer_ConnectionErrors(t *testing.T) {
 	server, listener := newTestStompServer(NewStompConfig(0, []string{"/pub"}))
+	started := make(chan struct{}, 1)
+	server.SetConnectionEventCallback(ConnectionStarting, func(connEvent *ConnEvent) {
+		started <- struct{}{}
+	})
 
 	go server.Start()
 
@@ -517,16 +577,20 @@ func TestStompServer_ConnectionErrors(t *testing.T) {
 		listener.incomingConnections <- errors.New("connection-error")
 	}
 
-	assert.Equal(t, len(server.connectionsMap), 0)
-
-	// verify that we can still connect after the errors
-	for i := 0; i < 5; i++ {
-		listener.incomingConnections <- NewMockRawConnection()
+	select {
+	case <-started:
+		t.Fatal("connection errors should not start a STOMP connection")
+	default:
 	}
 
-	server.callbackLock.Lock()
-	defer server.callbackLock.Unlock()
-	assert.True(t, len(server.connectionsMap) > 0)
+	// verify that we can still connect after the errors
+	listener.incomingConnections <- NewMockRawConnection()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("server did not accept a valid connection after connection errors")
+	}
+	server.Stop()
 }
 
 func subscribeMockConToTopic(conn *MockRawConnection, topics ...string) {

@@ -390,9 +390,11 @@ func (c *MockBridgeConnection) SendMessageWithReplyDestination(destination, repl
 }
 
 type MockBridgeSubscription struct {
-	Id          *uuid.UUID
-	Destination string
-	Channel     chan *model.Message
+	Id              *uuid.UUID
+	Destination     string
+	Channel         chan *model.Message
+	Unsubscribed    bool
+	UnsubscribeFunc func() error
 }
 
 func (m *MockBridgeSubscription) GetId() *uuid.UUID {
@@ -408,5 +410,9 @@ func (m *MockBridgeSubscription) GetMsgChannel() chan *model.Message {
 }
 
 func (m *MockBridgeSubscription) Unsubscribe() error {
+	m.Unsubscribed = true
+	if m.UnsubscribeFunc != nil {
+		return m.UnsubscribeFunc()
+	}
 	return nil
 }

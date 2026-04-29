@@ -11,7 +11,6 @@ import (
 	"github.com/pb33f/ranch/model"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 )
 
 // RANCH_INTERNAL_CHANNEL_PREFIX prefixes channels reserved for Ranch internals.
@@ -167,13 +166,17 @@ func (m *transportMonitor) removeListener(listenerId MonitorEventListenerId) {
 
 func (m *transportMonitor) sendEvent(event *MonitorEvent) {
 	m.lock.RLock()
-	defer m.lock.RUnlock()
-
+	listeners := make([]MonitorEventHandler, 0,
+		len(m.listenersForAllEvents)+len(m.listenersByType[event.EventType]))
 	for _, l := range m.listenersForAllEvents {
-		l(event)
+		listeners = append(listeners, l)
 	}
-
 	for _, l := range m.listenersByType[event.EventType] {
+		listeners = append(listeners, l)
+	}
+	m.lock.RUnlock()
+
+	for _, l := range listeners {
 		l(event)
 	}
 }
@@ -415,35 +418,43 @@ func (bus *transportEventBus) wrapMessageHandler(
 	}
 
 	errorHandler := func(ctx context.Context, err error) {
-		if messageHandler.errorHandler != nil {
-			if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
-				return
-			}
+		if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
 			if runOnce {
-				messageHandler.invokeOnce.Do(func() {
-					atomic.AddInt64(&messageHandler.runCount, 1)
-					messageHandler.errorHandler(ctx, err)
-				})
-			} else {
-				atomic.AddInt64(&messageHandler.runCount, 1)
-				messageHandler.errorHandler(ctx, err)
+				messageHandler.Close()
 			}
+			return
+		}
+		if runOnce {
+			messageHandler.invokeOnce.Do(func() {
+				defer messageHandler.Close()
+				if messageHandler.errorHandler != nil {
+					messageHandler.errorHandler(ctx, err)
+				}
+			})
+			return
+		}
+		if messageHandler.errorHandler != nil {
+			messageHandler.errorHandler(ctx, err)
 		}
 	}
 	successHandler := func(ctx context.Context, msg *model.Message) {
-		if messageHandler.successHandler != nil {
-			if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
-				return
-			}
+		if messageHandler.handlerContext != nil && messageHandler.handlerContext.Err() != nil {
 			if runOnce {
-				messageHandler.invokeOnce.Do(func() {
-					atomic.AddInt64(&messageHandler.runCount, 1)
-					messageHandler.successHandler(ctx, msg)
-				})
-			} else {
-				atomic.AddInt64(&messageHandler.runCount, 1)
-				messageHandler.successHandler(ctx, msg)
+				messageHandler.Close()
 			}
+			return
+		}
+		if runOnce {
+			messageHandler.invokeOnce.Do(func() {
+				defer messageHandler.Close()
+				if messageHandler.successHandler != nil {
+					messageHandler.successHandler(ctx, msg)
+				}
+			})
+			return
+		}
+		if messageHandler.successHandler != nil {
+			messageHandler.successHandler(ctx, msg)
 		}
 	}
 
@@ -459,22 +470,22 @@ func (bus *transportEventBus) wrapMessageHandler(
 		if allTraffic {
 			if msg.Direction == model.ErrorDir {
 				errorHandler(ctx, msg.Error)
-			} else {
+				return
+			}
+			successHandler(ctx, msg)
+			return
+		}
+		switch msg.Direction {
+		case model.ErrorDir:
+			errorHandler(ctx, msg.Error)
+		case dir:
+			// if we're checking for specific traffic, check a DestinationId match is required.
+			if !messageHandler.ignoreId &&
+				(msg.DestinationId != nil && id != nil) && (*id == *msg.DestinationId) {
 				successHandler(ctx, msg)
 			}
-		} else {
-			if msg.Direction == dir {
-				// if we're checking for specific traffic, check a DestinationId match is required.
-				if !messageHandler.ignoreId &&
-					(msg.DestinationId != nil && id != nil) && (*id == *msg.DestinationId) {
-					successHandler(ctx, msg)
-				}
-				if messageHandler.ignoreId {
-					successHandler(ctx, msg)
-				}
-			}
-			if msg.Direction == model.ErrorDir {
-				errorHandler(ctx, msg.Error)
+			if messageHandler.ignoreId {
+				successHandler(ctx, msg)
 			}
 		}
 	}

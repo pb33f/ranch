@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	buspkg "github.com/pb33f/ranch/bus"
 	"github.com/pb33f/ranch/model"
-	"github.com/pb33f/ranch/transport/fabric"
+	"github.com/pb33f/ranch/monitor"
 	"github.com/stretchr/testify/assert"
 	"reflect"
 	"strings"
@@ -25,14 +25,14 @@ func TestStoreSyncService_NewConnection(t *testing.T) {
 	service, bus, _ := testStoreSyncService()
 
 	// verify that the service ignores non transport-store-sync events
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, "galactic-channel", nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, "galactic-channel", nil)
 	assert.Equal(t, len(service.syncClients), 0)
 
 	syncChan := "transport-store-sync.1"
 
 	bus.GetChannelManager().CreateChannel(syncChan)
 
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 	assert.Equal(t, len(service.syncClients), 1)
 }
 
@@ -52,7 +52,7 @@ func TestStoreSyncService_OpenStoreErrors(t *testing.T) {
 		assert.Fail(t, "Unexpected error")
 	})
 
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 	id := uuid.New()
 	_ = bus.SendRequestMessage(syncChan, "invalid-request", nil)
 	_ = bus.SendRequestMessage(syncChan, &model.Request{
@@ -99,7 +99,7 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
 
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	wg := sync.WaitGroup{}
 	var syncResp []any
@@ -133,7 +133,7 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 	assert.Equal(t, resp.ResponseType, "storeContentResponse")
 
 	// try subscribing to the same sync channel again
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 	assert.Equal(t, len(service.syncClients[syncChan].openStores), 1)
 
 	wg.Add(1)
@@ -148,7 +148,7 @@ func TestStoreSyncService_OpenStore(t *testing.T) {
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	mh2, _ := bus.ListenStream(syncChan2)
 	mh2.Handle(func(message *model.Message) {
@@ -205,11 +205,11 @@ func TestStoreSyncService_CloseStore(t *testing.T) {
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	wg := sync.WaitGroup{}
 	var syncResp1 []any
@@ -309,7 +309,7 @@ func TestStoreSyncService_UpdateStoreErrors(t *testing.T) {
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	wg := sync.WaitGroup{}
 	var syncResp []any
@@ -367,11 +367,11 @@ func TestStoreSyncService_UpdateStore(t *testing.T) {
 
 	syncChan := "transport-store-sync.1"
 	bus.GetChannelManager().CreateChannel(syncChan)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan, nil)
 
 	syncChan2 := "transport-store-sync.2"
 	bus.GetChannelManager().CreateChannel(syncChan2)
-	bus.SendMonitorEvent(fabric.FabricEndpointSubscribeEvt, syncChan2, nil)
+	bus.SendMonitorEvent(monitor.FabricEndpointSubscribeEvt, syncChan2, nil)
 
 	wg := sync.WaitGroup{}
 	var syncResp1 []any

@@ -273,7 +273,17 @@ func (fe *fabricEndpoint) detachSubscriptionForwarder(channelName string) bus.Me
 }
 
 func (fe *fabricEndpoint) sendRouteError(destination string, err error) {
-	fe.server.SendMessage(destination, []byte(err.Error()))
+	fe.logger.Error("fabric route handler returned an error", "destination", destination, "err", err)
+	payload, marshalErr := json.Marshal(&model.Response{
+		Error:        true,
+		ErrorCode:    500,
+		ErrorMessage: "fabric route error",
+	})
+	if marshalErr != nil {
+		fe.logger.Error("failed to marshal fabric route error response", "destination", destination, "err", marshalErr)
+		return
+	}
+	fe.server.SendMessage(destination, payload)
 }
 
 func (fe *fabricEndpoint) forwardRouteMessage(

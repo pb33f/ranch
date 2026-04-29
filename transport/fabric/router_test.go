@@ -4,6 +4,8 @@
 package fabric
 
 import (
+	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
@@ -79,6 +81,32 @@ func TestRouter_HonorsRequestDirection(t *testing.T) {
 	assert.NoError(t, bus.SendResponseMessage("request-service", "response-ignored", nil))
 	assert.NoError(t, bus.GetChannelManager().WaitForChannel("request-service"))
 	assert.Len(t, mockServer.sentMessages, 1)
+}
+
+func TestRouter_SendsStructuredRouteError(t *testing.T) {
+	bus := newTestEventBus()
+	bus.GetChannelManager().CreateChannel("error-route-service")
+
+	fe, mockServer := newTestFabricEndpoint(bus, EndpointConfig{TopicPrefix: "/topic"})
+	handle, err := fe.Router().RegisterRoute(RouteSpec{
+		BusChannel: "error-route-service",
+		Direction:  model.ResponseDir,
+	})
+	assert.NoError(t, err)
+	defer func() { _ = handle.Close() }()
+
+	mockServer.wg = &sync.WaitGroup{}
+	mockServer.wg.Add(1)
+	assert.NoError(t, bus.SendErrorMessage("error-route-service", errors.New("secret backend detail"), nil))
+	mockServer.wg.Wait()
+
+	assert.Len(t, mockServer.sentMessages, 1)
+	assert.Equal(t, "/topic/error-route-service", mockServer.sentMessages[0].Destination)
+	var response model.Response
+	assert.NoError(t, json.Unmarshal(mockServer.sentMessages[0].Payload, &response))
+	assert.True(t, response.Error)
+	assert.Equal(t, 500, response.ErrorCode)
+	assert.Equal(t, "fabric route error", response.ErrorMessage)
 }
 
 func TestRouter_RejectsUnsupportedDirection(t *testing.T) {

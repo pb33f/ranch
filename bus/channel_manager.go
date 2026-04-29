@@ -21,7 +21,11 @@ type ChannelManager interface {
 	CheckChannelExists(channelName string) bool
 	GetChannel(channelName string) (*Channel, error)
 	GetAllChannels() map[string]*Channel
+	// SubscribeChannelHandler registers fn on a channel. If runOnce is true,
+	// the channel removes the handler after the next message sent to that channel.
 	SubscribeChannelHandler(channelName string, fn MessageHandlerFunction, runOnce bool) (*uuid.UUID, error)
+	// SubscribeChannelHandlerContext registers fn on a channel. If runOnce is true,
+	// the channel removes the handler after the next message sent to that channel.
 	SubscribeChannelHandlerContext(channelName string, fn MessageHandlerContextFunction, runOnce bool) (*uuid.UUID, error)
 	UnsubscribeChannelHandler(channelName string, id *uuid.UUID) error
 	WaitForChannel(channelName string) error
@@ -40,8 +44,6 @@ func NewBusChannelManager(bus EventBus) ChannelManager {
 
 type busChannelManager struct {
 	// channels uses atomic copy-on-write because channel lookup is on the send path.
-	// BenchmarkChannelManagerGetChannelParallel on Apple M4 Max: RWMutex ~130 ns/op,
-	// sync.Map ~66 ns/op, atomic COW map ~65 ns/op; all variants were 0 allocs/op.
 	channels atomic.Pointer[map[string]*Channel]
 	bus      *transportEventBus
 	lock     sync.Mutex
@@ -49,11 +51,11 @@ type busChannelManager struct {
 
 func (manager *busChannelManager) CreateChannel(channelName string) *Channel {
 	manager.lock.Lock()
-	defer manager.lock.Unlock()
 
 	current := manager.channelSnapshot()
 	channel, ok := current[channelName]
 	if ok {
+		manager.lock.Unlock()
 		return channel
 	}
 
@@ -63,23 +65,35 @@ func (manager *busChannelManager) CreateChannel(channelName string) *Channel {
 	}
 	next[channelName] = NewChannel(channelName)
 	manager.channels.Store(&next)
-	go manager.bus.SendMonitorEvent(ChannelCreatedEvt, channelName, nil)
-	return next[channelName]
+	channel = next[channelName]
+	manager.lock.Unlock()
+
+	manager.bus.SendMonitorEvent(ChannelCreatedEvt, channelName, nil)
+	return channel
 }
 
 func (manager *busChannelManager) DestroyChannel(channelName string) {
 	manager.lock.Lock()
-	defer manager.lock.Unlock()
 
 	current := manager.channelSnapshot()
 	next := make(map[string]*Channel, len(current))
+	destroyed := false
+	var destroyedChannel *Channel
 	for name, ch := range current {
 		if name != channelName {
 			next[name] = ch
+		} else {
+			destroyed = true
+			destroyedChannel = ch
 		}
 	}
 	manager.channels.Store(&next)
-	go manager.bus.SendMonitorEvent(ChannelDestroyedEvt, channelName, nil)
+	manager.lock.Unlock()
+
+	if destroyed {
+		manager.closeBrokerSubscriptions(channelName, destroyedChannel)
+		manager.bus.SendMonitorEvent(ChannelDestroyedEvt, channelName, nil)
+	}
 }
 
 func (manager *busChannelManager) GetChannel(channelName string) (*Channel, error) {
@@ -177,8 +191,6 @@ func (manager *busChannelManager) MarkChannelAsLocal(channelName string) (err er
 	}
 	channel.SetLocal()
 
-	channel.removeBrokerConnections()
-
 	manager.handleLocalChannelEvent(channelName)
 
 	return nil
@@ -191,37 +203,48 @@ func (manager *busChannelManager) handleGalacticChannelEvent(channelName string,
 		return
 	}
 
-	if !ch.isBrokerSubscribedToDestination(ge.conn, ge.dest) {
-		if sub, e := ge.conn.Subscribe(ge.dest); e == nil {
+	if ch.isBrokerSubscribedToDestination(ge.conn, ge.dest) {
+		return
+	}
 
-			ch.addBrokerConnection(ge.conn)
+	if sub, e := ge.conn.Subscribe(ge.dest); e == nil {
+		if !ch.addBrokerSubscriptionIfMissing(ge.conn, sub) {
+			_ = sub.Unsubscribe()
+			return
+		}
 
-			m := model.GenerateResponse(&model.MessageConfig{Payload: ge.dest}) // set the mapped destination as the payload
-			ch.addBrokerSubscription(ge.conn, sub)
-			manager.bus.SendMonitorEvent(BrokerSubscribedEvt, channelName, m)
-			select {
-			case ch.brokerMappedEvent <- true: // let channel watcher know, the channel is mapped
-			default: // if no-one is listening, drop.
-			}
+		m := model.GenerateResponse(&model.MessageConfig{Payload: ge.dest}) // set the mapped destination as the payload
+		manager.bus.SendMonitorEvent(BrokerSubscribedEvt, channelName, m)
+		select {
+		case ch.brokerMappedEvent <- true: // let channel watcher know, the channel is mapped
+		default: // if no-one is listening, drop.
 		}
 	}
 }
 
 func (manager *busChannelManager) handleLocalChannelEvent(channelName string) {
 	ch, _ := manager.GetChannel(channelName)
-	// loop through all the connections we have mapped, and subscribe!
-	for _, s := range ch.brokerSubs {
-		if e := s.s.Unsubscribe(); e == nil {
-			ch.removeBrokerSubscription(s.s)
-			m := model.GenerateResponse(&model.MessageConfig{Payload: s.s.GetDestination()}) // set the unmapped destination as the payload
-			manager.bus.SendMonitorEvent(BrokerUnsubscribedEvt, channelName, m)
-			select {
-			case ch.brokerMappedEvent <- false: // let channel watcher know, the channel is un-mapped
-			default: // if no-one is listening, drop.
-			}
+	manager.closeBrokerSubscriptions(channelName, ch)
+}
+
+func (manager *busChannelManager) closeBrokerSubscriptions(channelName string, ch *Channel) {
+	if ch == nil {
+		return
+	}
+	for _, sub := range ch.closeBrokerSubscriptions() {
+		if sub.s == nil {
+			continue
+		}
+		if err := sub.s.Unsubscribe(); err != nil {
+			continue
+		}
+		m := model.GenerateResponse(&model.MessageConfig{Payload: sub.s.GetDestination()})
+		manager.bus.SendMonitorEvent(BrokerUnsubscribedEvt, channelName, m)
+		select {
+		case ch.brokerMappedEvent <- false:
+		default:
 		}
 	}
-	ch.removeBrokerConnections()
 }
 
 type galacticEvent struct {

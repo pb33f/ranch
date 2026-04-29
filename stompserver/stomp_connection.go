@@ -117,10 +117,16 @@ type stompConn struct {
 	currentMessageId uint64
 	closeOnce        sync.Once
 	done             chan struct{}
+	serverDone       <-chan struct{}
 }
 
 // NewStompConn creates and starts a server-side STOMP connection.
 func NewStompConn(rawConnection RawConnection, config StompConfig, events chan *ConnEvent) StompConn {
+	return newStompConn(rawConnection, config, events, nil)
+}
+
+func newStompConn(
+	rawConnection RawConnection, config StompConfig, events chan *ConnEvent, serverDone <-chan struct{}) StompConn {
 	conn := &stompConn{
 		rawConnection: rawConnection,
 		state:         connecting,
@@ -132,6 +138,7 @@ func NewStompConn(rawConnection RawConnection, config StompConfig, events chan *
 		events:        events,
 		subscriptions: make(map[string]*Subscription),
 		done:          make(chan struct{}),
+		serverDone:    serverDone,
 	}
 
 	go conn.run()
@@ -208,6 +215,7 @@ func (conn *stompConn) Close() {
 func (conn *stompConn) sendConnectionClosed(event *ConnEvent) {
 	select {
 	case conn.events <- event:
+	case <-conn.serverDone:
 	default:
 		// Close cleanup must not be dropped. If the server event loop is briefly
 		// behind, wait in a bounded goroutine rather than leaking forever.
@@ -224,6 +232,8 @@ func (conn *stompConn) sendEvent(event *ConnEvent) bool {
 	select {
 	case conn.events <- event:
 		return true
+	case <-conn.serverDone:
+		return false
 	case <-timer.C:
 		conn.config.Logger().Warn("timed out sending STOMP connection event",
 			"connectionId", event.ConnId,

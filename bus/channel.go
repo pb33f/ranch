@@ -68,17 +68,14 @@ func (activity *channelActivity) waitQuiescentAfter(ctx context.Context, start u
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	stopWakeup := make(chan struct{})
-	defer close(stopWakeup)
-	go func() {
-		select {
-		case <-ctx.Done():
+	if ctx.Done() != nil {
+		stopWakeup := context.AfterFunc(ctx, func() {
 			activity.lock.Lock()
 			activity.cond.Broadcast()
 			activity.lock.Unlock()
-		case <-stopWakeup:
-		}
-	}()
+		})
+		defer stopWakeup()
+	}
 
 	activity.lock.Lock()
 	defer activity.lock.Unlock()
@@ -215,7 +212,6 @@ func (channel *Channel) sendMessageToHandlers(
 		} else if handler.callBackFunction != nil {
 			handler.callBackFunction(message)
 		}
-		atomic.AddInt64(&handler.runCount, 1)
 	}
 }
 
@@ -303,13 +299,16 @@ func (channel *Channel) handlersSnapshot() []*channelEventHandler {
 	return *handlers
 }
 
-func (channel *Channel) listenToBrokerSubscription(sub bridge.Subscription) {
+func (channel *Channel) listenToBrokerSubscription(sub *connectionSub) {
 	for {
-		msg, m := <-sub.GetMsgChannel()
-		if m {
+		select {
+		case msg, ok := <-sub.s.GetMsgChannel():
+			if !ok {
+				return
+			}
 			channel.Send(msg)
-		} else {
-			break
+		case <-sub.stop:
+			return
 		}
 	}
 }
@@ -338,34 +337,36 @@ func (channel *Channel) isBrokerSubscribedToDestination(c bridge.Connection, des
 	return false
 }
 
-func (channel *Channel) addBrokerConnection(c bridge.Connection) {
-	channel.channelLock.Lock()
-	defer channel.channelLock.Unlock()
+func (channel *Channel) addBrokerSubscription(conn bridge.Connection, sub bridge.Subscription) {
+	channel.addBrokerSubscriptionIfMissing(conn, sub)
+}
 
-	for _, brCon := range channel.brokerConns {
-		if *brCon.GetId() == *c.GetId() {
-			return
+func (channel *Channel) addBrokerSubscriptionIfMissing(conn bridge.Connection, sub bridge.Subscription) bool {
+	cs := &connectionSub{c: conn, s: sub, stop: make(chan struct{})}
+
+	channel.channelLock.Lock()
+	for _, existing := range channel.brokerSubs {
+		if existing.s != nil && existing.s.GetDestination() == sub.GetDestination() &&
+			existing.c != nil && *existing.c.GetId() == *conn.GetId() {
+			channel.channelLock.Unlock()
+			return false
 		}
 	}
-
-	channel.brokerConns = append(channel.brokerConns, c)
-}
-
-func (channel *Channel) removeBrokerConnections() {
-	channel.channelLock.Lock()
-	defer channel.channelLock.Unlock()
-
-	channel.brokerConns = []bridge.Connection{}
-}
-
-func (channel *Channel) addBrokerSubscription(conn bridge.Connection, sub bridge.Subscription) {
-	cs := &connectionSub{c: conn, s: sub}
-
-	channel.channelLock.Lock()
+	hasConnection := false
+	for _, brCon := range channel.brokerConns {
+		if *brCon.GetId() == *conn.GetId() {
+			hasConnection = true
+			break
+		}
+	}
+	if !hasConnection {
+		channel.brokerConns = append(channel.brokerConns, conn)
+	}
 	channel.brokerSubs = append(channel.brokerSubs, cs)
 	channel.channelLock.Unlock()
 
-	go channel.listenToBrokerSubscription(sub)
+	go channel.listenToBrokerSubscription(cs)
+	return true
 }
 
 func (channel *Channel) removeBrokerSubscription(sub bridge.Subscription) {
@@ -374,9 +375,24 @@ func (channel *Channel) removeBrokerSubscription(sub bridge.Subscription) {
 
 	for i, cs := range channel.brokerSubs {
 		if *sub.GetId() == *cs.s.GetId() {
+			cs.stopListening()
 			channel.brokerSubs = removeSub(channel.brokerSubs, i)
+			return
 		}
 	}
+}
+
+func (channel *Channel) closeBrokerSubscriptions() []*connectionSub {
+	channel.channelLock.Lock()
+	defer channel.channelLock.Unlock()
+
+	subs := append([]*connectionSub(nil), channel.brokerSubs...)
+	for _, sub := range subs {
+		sub.stopListening()
+	}
+	channel.brokerSubs = []*connectionSub{}
+	channel.brokerConns = []bridge.Connection{}
+	return subs
 }
 
 func removeSub(s []*connectionSub, i int) []*connectionSub {
@@ -385,6 +401,17 @@ func removeSub(s []*connectionSub, i int) []*connectionSub {
 }
 
 type connectionSub struct {
-	c bridge.Connection
-	s bridge.Subscription
+	c        bridge.Connection
+	s        bridge.Subscription
+	stop     chan struct{}
+	stopOnce sync.Once
+}
+
+func (sub *connectionSub) stopListening() {
+	if sub == nil || sub.stop == nil {
+		return
+	}
+	sub.stopOnce.Do(func() {
+		close(sub.stop)
+	})
 }

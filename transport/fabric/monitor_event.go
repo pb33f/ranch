@@ -1,10 +1,10 @@
 package fabric
 
-import "github.com/pb33f/ranch/bus"
+import "github.com/pb33f/ranch/monitor"
 
 const (
 	// FabricEndpointSubscribeEvt is emitted when a STOMP client subscribes through Fabric.
-	FabricEndpointSubscribeEvt bus.MonitorEventType = "fabric.endpoint.subscribe"
+	FabricEndpointSubscribeEvt = monitor.FabricEndpointSubscribeEvt
 	// FabricEndpointUnsubscribeEvt is emitted when a STOMP client unsubscribes through Fabric.
-	FabricEndpointUnsubscribeEvt bus.MonitorEventType = "fabric.endpoint.unsubscribe"
+	FabricEndpointUnsubscribeEvt = monitor.FabricEndpointUnsubscribeEvt
 )

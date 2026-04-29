@@ -12,7 +12,6 @@ type channelEventHandler struct {
 	callBackFunction        MessageHandlerFunction
 	contextCallBackFunction MessageHandlerContextFunction
 	runOnce                 bool
-	runCount                int64
 	fired                   atomic.Bool
 	uuid                    *uuid.UUID
 }

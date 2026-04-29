@@ -218,6 +218,14 @@ type routerSnapshot struct {
 }
 
 func (r *Router) snapshot() routerSnapshot {
+	r.mu.RLock()
+	if !r.dirty && r.dispatchMux != nil && r.pathMux != nil {
+		snapshot := r.snapshotLocked()
+		r.mu.RUnlock()
+		return snapshot
+	}
+	r.mu.RUnlock()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -225,6 +233,10 @@ func (r *Router) snapshot() routerSnapshot {
 		r.rebuildMuxLocked()
 	}
 
+	return r.snapshotLocked()
+}
+
+func (r *Router) snapshotLocked() routerSnapshot {
 	return routerSnapshot{
 		dispatchMux:             r.dispatchMux,
 		pathMux:                 r.pathMux,
