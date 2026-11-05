@@ -28,6 +28,7 @@ const DefaultDebugProfilerPort = 6062
 
 // PlatformServerConfig holds all the core configuration needed for the functionality of Plank
 type PlatformServerConfig struct {
+	HTTPListenAddress              string              `json:"http_listen_address"`            // optional bind address; empty preserves :Port
 	RootDir                        string              `json:"root_dir"`                       // root directory the server should base itself on
 	StaticDir                      []string            `json:"static_dir"`                     // static content folders that HTTP server should serve
 	SpaConfig                      *SpaConfig          `json:"spa_config"`                     // single page application configuration
