@@ -60,8 +60,12 @@ func (ps *platformServer) initialize() {
 	}
 
 	// create an Http server instance
+	listenAddress := ps.serverConfig.HTTPListenAddress
+	if listenAddress == "" {
+		listenAddress = fmt.Sprintf(":%d", ps.serverConfig.Port)
+	}
 	ps.HttpServer = &http.Server{
-		Addr:         fmt.Sprintf(":%d", ps.serverConfig.Port),
+		Addr:         listenAddress,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}
