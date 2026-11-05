@@ -25,7 +25,9 @@ func TestExplicitHTTPListenAddress(t *testing.T) {
 	if !ln.Addr().(*net.TCPAddr).IP.IsLoopback() {
 		t.Fatal(ln.Addr())
 	}
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Use a fixed reserved port so the running HTTP endpoint can be probed.
@@ -44,7 +46,9 @@ func TestExplicitHTTPListenAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatal(response.StatusCode)
 	}
