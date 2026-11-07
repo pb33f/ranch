@@ -98,6 +98,7 @@ type platformServer struct {
 	middlewareManager  middleware.MiddlewareManager      // middleware maanger instance
 	router             *routing.Router                   // router instance
 	endpointHandlerMap map[string]http.HandlerFunc       // internal map to store rest endpoint -handler mappings
+	spaHandler         http.Handler                      // SPA file handler wrapped with cache-control rules
 	bridges            *RestBridgeRegistry               // REST bridge route and response registry
 	fabricConn         stompserver.RawConnectionListener // WebSocket listener instance
 	fabricEndpoint     fabric.Endpoint                   // fabric endpoint instance

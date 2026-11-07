@@ -8,11 +8,16 @@ import (
 	"github.com/pb33f/ranch/plank/pkg/routing"
 )
 
-// BrowserNavigationFallback returns a predicate for SPA browser navigation requests.
+// BrowserNavigationFallback returns a predicate for SPA browser navigation requests. The site root
+// always serves the SPA, whatever the Accept header, so uptime checks, crawlers and plain curl get
+// the index instead of a 404. Deeper extensionless paths still need Accept: text/html.
 func BrowserNavigationFallback() func(*http.Request) bool {
 	return func(r *http.Request) bool {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return false
+		}
+		if r.URL.Path == "/" {
+			return true
 		}
 		if len(filepath.Ext(r.URL.Path)) > 0 {
 			return false
@@ -102,7 +107,7 @@ func (ps *platformServer) tryServeSPA(w http.ResponseWriter, r *http.Request) bo
 	}
 
 	if len(filepath.Ext(r.URL.Path)) > 0 {
-		ps.serveSPAResource(w, r)
+		ps.serveSPA(w, r)
 		return true
 	}
 
@@ -110,7 +115,7 @@ func (ps *platformServer) tryServeSPA(w http.ResponseWriter, r *http.Request) bo
 		return false
 	}
 
-	ps.serveSPAResource(w, r)
+	ps.serveSPA(w, r)
 	return true
 }
 

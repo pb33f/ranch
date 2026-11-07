@@ -182,17 +182,30 @@ func (ps *platformServer) configureSPA() {
 		return
 	}
 
+	// collate here so configs built as struct literals (not via NewSpaConfig or a config file) still get their rules
+	ps.serverConfig.SpaConfig.CollateCacheControlRules()
+	cacheControl := ps.serverConfig.SpaConfig.CacheControlMiddleware()
+
 	for _, asset := range ps.serverConfig.SpaConfig.StaticAssets {
 		folderPath, uri := utils.DeriveStaticURIFromPath(asset)
 		ps.SetStaticRoute(
 			utils.SanitizeUrl(uri, false),
 			folderPath,
-			ps.serverConfig.SpaConfig.CacheControlMiddleware())
+			cacheControl)
 	}
 
-	spaConfigCacheControlMiddleware := ps.serverConfig.SpaConfig.CacheControlMiddleware()
+	ps.spaHandler = ps.serverConfig.SpaConfig.spaCacheControlMiddleware()(http.HandlerFunc(ps.serveSPAResource))
 	endpointHandlerMapKey := ps.serverConfig.SpaConfig.BaseUri + "*"
-	ps.endpointHandlerMap[endpointHandlerMapKey] = spaConfigCacheControlMiddleware(http.HandlerFunc(ps.serveSPAResource)).ServeHTTP
+	ps.endpointHandlerMap[endpointHandlerMapKey] = ps.spaHandler.ServeHTTP
+}
+
+// serveSPA serves an SPA resource through the cache-control rules when configureSPA has run.
+func (ps *platformServer) serveSPA(w http.ResponseWriter, r *http.Request) {
+	if ps.spaHandler != nil {
+		ps.spaHandler.ServeHTTP(w, r)
+		return
+	}
+	ps.serveSPAResource(w, r)
 }
 
 func (ps *platformServer) serveSPAResource(w http.ResponseWriter, r *http.Request) {

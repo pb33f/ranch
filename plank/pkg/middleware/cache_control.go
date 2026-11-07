@@ -166,6 +166,7 @@ func cacheControlWrapper(h http.Handler, globs []glob.Glob, directive *CacheCont
 
 		if !uriMatches {
 			h.ServeHTTP(w, r)
+			return
 		}
 
 		w.Header().Set("Cache-Control", directive.String())
