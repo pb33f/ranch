@@ -32,6 +32,21 @@ type Route struct {
 	handler http.Handler
 }
 
+// RouteInfo is a copy of one route's registration metadata. It does not expose
+// the handler or a mutable route handle.
+type RouteInfo struct {
+	// Path is the normalized path pattern passed to Path or PathPrefix.
+	Path string
+	// Prefix distinguishes a prefix registration from an exact path.
+	Prefix bool
+	// Methods contains the configured methods; an empty slice allows any method.
+	Methods []string
+	// Name is the lookup name, or empty for an unnamed route.
+	Name string
+	// HasHandler reports whether the route has an assigned handler.
+	HasHandler bool
+}
+
 // NewRouter creates an empty Router.
 func NewRouter() *Router {
 	return &Router{
@@ -73,6 +88,28 @@ func (r *Router) Get(name string) *Route {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.named[name]
+}
+
+// Routes returns a consistent snapshot of all registrations in registration
+// order, including unnamed routes and routes without handlers. The result and
+// its method slices belong to the caller; later route changes do not alter them.
+// Each fluent configuration call is a separate mutation, so a snapshot taken
+// during registration can include a partially configured route.
+func (r *Router) Routes() []RouteInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	routes := make([]RouteInfo, len(r.routes))
+	for i, route := range r.routes {
+		routes[i] = RouteInfo{
+			Path:       route.path,
+			Prefix:     route.prefix,
+			Methods:    append([]string(nil), route.methods...),
+			Name:       route.name,
+			HasHandler: route.handler != nil,
+		}
+	}
+	return routes
 }
 
 // CloneExcluding returns a router clone without the named routes in names.
